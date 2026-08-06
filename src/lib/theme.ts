@@ -70,6 +70,12 @@ export const SURFACE_COLORS = {
   highlight: { light: '#0E9A9A', dark: '#2AD3D3' },
   confirm: { light: '#12874F', dark: '#25C071' },
   'ghost-ink': { light: '#0F172A', dark: '#F8FAFC' },
+
+  // Chrome: the panels, headers and buttons framing the board. Kept in the
+  // same table so light and dark stay in step with the board itself.
+  chrome: { light: '#F4F1EA', dark: '#1B2430' },
+  'chrome-edge': { light: '#D6CFC1', dark: '#33404F' },
+  'chrome-ink': { light: '#1B2430', dark: '#E8EDF3' },
 } satisfies Record<string, ColorPair>;
 
 export type SurfaceKey = keyof typeof SURFACE_COLORS;
