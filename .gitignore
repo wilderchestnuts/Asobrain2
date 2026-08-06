@@ -43,3 +43,6 @@ next-env.d.ts
 # local env
 .env*.local
 .vercel
+
+# local game store used when Supabase is not configured
+.asobrain/
