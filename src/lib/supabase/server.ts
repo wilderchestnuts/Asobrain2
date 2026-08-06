@@ -29,7 +29,7 @@ export async function createServerSupabase(): Promise<SupabaseClient | null> {
             store.set(name, value, options);
           }
         } catch {
-          // Server Components cannot set cookies. Harmless: middleware
+          // Server Components cannot set cookies. Harmless: the proxy
           // refreshes the session on every request, so the write is redundant
           // there rather than lost.
         }

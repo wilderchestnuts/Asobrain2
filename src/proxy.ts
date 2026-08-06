@@ -3,18 +3,21 @@
  *
  * Without this, an access token that expires while an iPad is asleep is never
  * renewed and the next action comes back 401 — the session has to be refreshed
- * somewhere that can write cookies, and middleware is the only place that runs
- * before every render.
+ * somewhere that can write cookies, and this is the only place that runs before
+ * every render.
+ *
+ * Next 16 renamed the `middleware` convention to `proxy`; the runtime is
+ * always nodejs here, which suits Supabase's cookie handling fine.
  *
  * The public env vars are read inline rather than imported so that nothing
- * server-secret can be pulled into the middleware bundle.
+ * server-secret can be pulled into this bundle.
  */
 
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
