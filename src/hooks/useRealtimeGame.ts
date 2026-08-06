@@ -118,6 +118,12 @@ export function useRealtimeGame(gameId: string | null): RealtimeGame {
 
     generation.current += 1;
     versionRef.current = -1;
+    // Drop any request still in flight from the previous generation. Without
+    // this the dedupe in `refresh` hands back that older promise, which is
+    // stamped with the old generation and therefore gets discarded as stale —
+    // so the very first load never applies. React's double-mount in
+    // development hits this every single time.
+    inFlight.current = null;
     setLoading(true);
     void refresh();
 

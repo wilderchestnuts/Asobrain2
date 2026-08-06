@@ -12,19 +12,13 @@ import type { SeatSpec } from '@/lib/engineBridge';
 
 export const dynamic = 'force-dynamic';
 
-const COLORS = ['red', 'blue', 'white', 'orange', 'green', 'brown'];
+import {
+  DEFAULT_OPTIONS as ENGINE_DEFAULTS,
+  VICTORY_POINT_RANGE,
+  defaultVictoryPoints,
+} from '@/game/setup';
 
-const DEFAULT_OPTIONS: GameOptions = {
-  expansions: { seafarers: false, citiesAndKnights: false },
-  victoryPointsToWin: 10,
-  scenario: 'random',
-  boardRadius: 2,
-  goldHexCount: 0,
-  handLimit: 7,
-  seed: '',
-  turnTimeLimit: 0,
-  friendlyRobber: false,
-};
+const COLORS = ['red', 'blue', 'white', 'orange', 'green', 'brown'];
 
 interface SeatInput {
   /** 'me' claims the seat for the caller, 'human' leaves it open to join. */
@@ -39,16 +33,33 @@ const clamp = (n: unknown, lo: number, hi: number, fallback: number): number =>
     ? Math.min(hi, Math.max(lo, Math.round(n)))
     : fallback;
 
-/** Never trust client options wholesale: they end up in the rules. */
+/**
+ * Never trust client options wholesale: they end up in the rules.
+ *
+ * Bounds are enforced here, but *defaults* come from the engine — duplicating
+ * them silently drifts, which is how a Cities & Knights game ended up with the
+ * base game's ten-point target.
+ */
 function sanitiseOptions(raw: unknown): GameOptions {
   const o = (raw ?? {}) as Partial<GameOptions> & Record<string, unknown>;
   const exp = (o.expansions ?? {}) as Partial<GameOptions['expansions']>;
+  const expansions = {
+    seafarers: exp.seafarers === true,
+    citiesAndKnights: exp.citiesAndKnights === true,
+  };
+  const trade = (o.botTrade ?? {}) as Partial<
+    NonNullable<GameOptions['botTrade']>
+  >;
+
   return {
-    expansions: {
-      seafarers: exp.seafarers === true,
-      citiesAndKnights: exp.citiesAndKnights === true,
-    },
-    victoryPointsToWin: clamp(o.victoryPointsToWin, 3, 30, 10),
+    ...ENGINE_DEFAULTS,
+    expansions,
+    victoryPointsToWin: clamp(
+      o.victoryPointsToWin,
+      VICTORY_POINT_RANGE.min,
+      VICTORY_POINT_RANGE.max,
+      defaultVictoryPoints(expansions),
+    ),
     scenario: typeof o.scenario === 'string' ? o.scenario.slice(0, 64) : 'random',
     boardRadius: clamp(o.boardRadius, 2, 5, 2),
     goldHexCount: clamp(o.goldHexCount, 0, 12, 0),
@@ -56,6 +67,21 @@ function sanitiseOptions(raw: unknown): GameOptions {
     seed: typeof o.seed === 'string' && o.seed ? o.seed.slice(0, 64) : nanoid(12),
     turnTimeLimit: clamp(o.turnTimeLimit, 0, 3600, 0),
     friendlyRobber: o.friendlyRobber === true,
+    // Capped low on purpose: bots must not be able to spam trade requests.
+    botTrade: {
+      maxPerGame: clamp(
+        trade.maxPerGame,
+        0,
+        20,
+        ENGINE_DEFAULTS.botTrade?.maxPerGame ?? 6,
+      ),
+      maxPerTurn: clamp(
+        trade.maxPerTurn,
+        0,
+        3,
+        ENGINE_DEFAULTS.botTrade?.maxPerTurn ?? 1,
+      ),
+    },
   };
 }
 
