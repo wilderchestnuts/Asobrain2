@@ -73,15 +73,27 @@ export function applyAction(
   };
 
   let result: ActionResult | null = null;
+  let handledBy: RulesModule | undefined;
   for (const module of full.modules!) {
     if (!module.handle || !module.enabled(draft)) continue;
     result = module.handle(draft, action, full);
-    if (result) break;
+    if (result) {
+      handledBy = module;
+      break;
+    }
   }
   if (!result) return fail(`no rule handles "${action.type}"`);
   if (!result.ok) return result;
 
   const next = result.state;
+
+  // Let the other modules react. Base first, so an expansion observes a state
+  // the base game has already finished updating.
+  for (const module of [...full.modules!].reverse()) {
+    if (module === handledBy || !module.afterAction) continue;
+    if (!module.enabled(next)) continue;
+    module.afterAction(next, action, full);
+  }
   next.rngCursor = rng.cursor;
   next.version = state.version + 1;
 

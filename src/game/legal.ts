@@ -267,13 +267,18 @@ export const canBuildCity = (
 ): boolean => cityError(state, playerId, vertex) === null;
 
 /**
- * A road may start from a settlement/city of yours, or extend one of your
- * roads — but not *through* a vertex an opponent has built on.
+ * A route may start from a settlement/city of yours, or extend one of your own
+ * pieces — but not *through* a vertex an opponent has built on.
+ *
+ * `kind` matters once Seafarers is on: a road continues a road and a ship
+ * continues a ship, and the two only ever join at a settlement or city you own.
+ * With Seafarers off every piece is a road, so the filter is a no-op.
  */
 export function roadConnects(
   state: GameState,
   playerId: PlayerId,
   edge: EdgeId,
+  kind: RoadPiece['kind'] = 'road',
 ): boolean {
   for (const v of edgeVertices(edge)) {
     const building = settlementAt(state, v);
@@ -283,7 +288,11 @@ export function roadConnects(
     }
     const incident = vertexEdges(v);
     const linked = state.roads.some(
-      (r) => r.owner === playerId && r.edge !== edge && incident.includes(r.edge),
+      (r) =>
+        r.owner === playerId &&
+        r.kind === kind &&
+        r.edge !== edge &&
+        incident.includes(r.edge),
     );
     if (linked) return true;
   }
@@ -298,10 +307,14 @@ export function roadError(
   state: GameState,
   playerId: PlayerId,
   edge: EdgeId,
-  opts: { free?: boolean; ignorePhase?: boolean } = {},
+  opts: { free?: boolean; ignorePhase?: boolean; kind?: RoadPiece['kind'] } = {},
 ): string | null {
   const p = playerById(state, playerId);
   if (!p) return 'no such player';
+  const kind = opts.kind ?? 'road';
+  const ship = kind === 'ship';
+  const noun = ship ? 'ship' : 'road';
+
   const setup = !opts.ignorePhase && isSetupPhase(state.phase);
   if (!opts.ignorePhase) {
     if (!setup && state.phase !== 'main') return 'you cannot build right now';
@@ -310,25 +323,33 @@ export function roadError(
   if (setup && setupNeeds(state, playerId) !== 'road') {
     return 'place your settlement first';
   }
-  if (!state.board.roadEdges.includes(edge)) return 'you cannot build there';
+
+  const buildable = ship ? state.board.shipEdges : state.board.roadEdges;
+  if (!buildable.includes(edge)) return `you cannot build a ${noun} there`;
   if (pieceAt(state, edge)) return 'that edge is taken';
-  if (p.supply.roads <= 0) return 'no roads left';
+  if ((ship ? p.supply.ships : p.supply.roads) <= 0) return `no ${noun}s left`;
 
   if (setup) {
     const anchor = setupRoadAnchor(state, playerId);
     if (!anchor || !vertexEdges(anchor).includes(edge)) {
-      return 'your road must touch the settlement you just placed';
+      return `your ${noun} must touch the settlement you just placed`;
     }
     return null;
   }
-  if (!roadConnects(state, playerId, edge)) {
+  if (!roadConnects(state, playerId, edge, kind)) {
     return 'that edge does not connect to your network';
   }
-  if (!opts.free && !canAfford(p.hand, COSTS.road)) {
-    return 'you cannot afford a road';
+  if (!opts.free && !canAfford(p.hand, ship ? COSTS.ship : COSTS.road)) {
+    return `you cannot afford a ${noun}`;
   }
   return null;
 }
+
+export const canBuildShip = (
+  state: GameState,
+  playerId: PlayerId,
+  edge: EdgeId,
+): boolean => roadError(state, playerId, edge, { kind: 'ship' }) === null;
 
 export const canBuildRoad = (
   state: GameState,

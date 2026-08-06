@@ -43,6 +43,16 @@ export interface RulesModule {
     ctx: Ctx,
   ): ActionResult | null;
 
+  /**
+   * Called after another module has successfully handled an action.
+   *
+   * This is how an expansion reacts to a base action without having to
+   * re-implement it — Seafarers watches for a settlement to award a landfall
+   * bonus, and Cities & Knights watches for one to attach a city wall. Only
+   * fires for modules that did *not* handle the action themselves.
+   */
+  afterAction?(draft: GameState, action: GameAction, ctx: Ctx): void;
+
   /** Called after the dice are rolled, before production is distributed. */
   onRoll?(draft: GameState, ctx: Ctx): void;
 

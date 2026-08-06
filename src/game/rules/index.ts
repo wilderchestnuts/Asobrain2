@@ -35,7 +35,8 @@
 
 import type { RulesModule } from '../engine';
 import { baseRules } from './base';
+import { seafarersRules } from './seafarers';
 
-export const RULES_MODULES: RulesModule[] = [baseRules];
+export const RULES_MODULES: RulesModule[] = [seafarersRules, baseRules];
 
-export { baseRules };
+export { baseRules, seafarersRules };
