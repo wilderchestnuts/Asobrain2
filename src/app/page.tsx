@@ -171,7 +171,29 @@ export default function LobbyPage() {
             )}
           </Row>
 
-          {error && <p style={{ color: '#B4232A', marginBottom: 10 }}>{error}</p>}
+          {error && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: 12,
+                borderRadius: 10,
+                border: '1px solid #B4232A',
+                background: 'rgba(180,35,42,.08)',
+              }}
+            >
+              <p style={{ color: '#B4232A', marginBottom: 8 }}>{error}</p>
+              {/* A failure here is nearly always deployment config, so point
+                  straight at the thing that can say which part. */}
+              <a
+                href="/api/health"
+                target="_blank"
+                rel="noreferrer"
+                style={{ textDecoration: 'underline', fontSize: 14 }}
+              >
+                Open the configuration check →
+              </a>
+            </div>
+          )}
 
           <Button tone="primary" wide disabled={busy} onClick={() => void start()}>
             {busy ? 'Starting…' : 'Start game'}

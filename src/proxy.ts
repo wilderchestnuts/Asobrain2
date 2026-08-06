@@ -17,14 +17,29 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+import { isUsableSupabaseUrl } from '@/lib/supabase/env';
+
 export async function proxy(request: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key =
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
+  const key = (
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+  )?.trim();
 
   // Local/guest mode: no Supabase, nothing to refresh.
   if (!url || !key) return NextResponse.next({ request });
+
+  // A malformed URL makes the Supabase constructor throw, and this runs on
+  // every request — so one mistyped variable would return an error page for the
+  // entire site, including /api/health. Refreshing the session is an
+  // optimisation; never let it take the app down.
+  if (!isUsableSupabaseUrl(url)) {
+    console.warn(
+      `[proxy] NEXT_PUBLIC_SUPABASE_URL is not a valid URL ("${url.slice(0, 60)}"). ` +
+        'Skipping session refresh; see /api/health.',
+    );
+    return NextResponse.next({ request });
+  }
 
   let response = NextResponse.next({ request });
 
@@ -47,7 +62,13 @@ export async function proxy(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
+  try {
+    await supabase.auth.getUser();
+  } catch (err) {
+    // A bad key or an unreachable project should degrade to "signed out", not
+    // break every route on the site.
+    console.warn('[proxy] session refresh failed:', (err as Error).message);
+  }
 
   return response;
 }

@@ -83,6 +83,25 @@ interface LocalFile {
 
 const LOCAL_PATH = path.join(process.cwd(), '.asobrain', 'local-games.json');
 
+/**
+ * Why storage cannot work, or `null` if it can.
+ *
+ * Local mode is a real feature on a dev machine, but on a serverless host it is
+ * a trap: each request may run in a fresh process with a read-only disk, so a
+ * game is created, the browser is redirected to it, and it is already gone.
+ * Better to refuse with an explanation than to hand back a game that evaporates.
+ */
+export function storageProblem(): string | null {
+  if (getServiceSupabase()) return null;
+  const serverless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  if (!serverless) return null;
+  return (
+    'This deployment has no database, so a game would not survive being created. ' +
+    'Set NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY and SUPABASE_SECRET_KEY ' +
+    'in the Vercel project settings, then redeploy. Open /api/health to see which are missing.'
+  );
+}
+
 let localCache: LocalFile | null = null;
 /** Serialises writes so two concurrent requests cannot clobber the file. */
 let localQueue: Promise<unknown> = Promise.resolve();

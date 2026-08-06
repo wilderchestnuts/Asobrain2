@@ -22,9 +22,29 @@ export const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ||
   '';
 
+/**
+ * Whether the URL is something the Supabase SDK will actually accept.
+ *
+ * This matters more than it looks: the SDK throws from its constructor on a
+ * malformed URL, and that constructor runs in the proxy on *every* request. A
+ * mistyped variable therefore takes down the whole deployment — every route
+ * returns an HTML error page, including the diagnostics endpoint meant to
+ * explain what went wrong. Treating an unusable URL as "not configured" keeps
+ * the app up and lets `/api/health` say what is broken.
+ */
+export function isUsableSupabaseUrl(url: string = SUPABASE_URL): boolean {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Whether the browser has enough config to talk to Supabase Auth/Realtime. */
 export const isSupabaseConfigured = (): boolean =>
-  Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
+  Boolean(isUsableSupabaseUrl() && SUPABASE_ANON_KEY);
 
 /**
  * The service-role key deliberately lives in ./service.ts, not here: this

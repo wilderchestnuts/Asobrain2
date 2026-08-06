@@ -5,7 +5,7 @@ import type { NextRequest } from 'next/server';
 import type { GameOptions } from '@/game/types';
 import { gameView } from '@/lib/api';
 import { getIdentity, persistIdentity, setGuestName } from '@/lib/auth';
-import { insertGame, listGamesFor } from '@/lib/db';
+import { insertGame, listGamesFor, storageProblem } from '@/lib/db';
 import type { GameRecord, SeatRecord } from '@/lib/db';
 import { createInitialState, statusFor } from '@/lib/engineBridge';
 import type { SeatSpec } from '@/lib/engineBridge';
@@ -92,6 +92,12 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // Fail before doing any work if the game could not possibly be stored.
+  const blocked = storageProblem();
+  if (blocked) {
+    return NextResponse.json({ error: blocked }, { status: 503 });
+  }
+
   const identity = await getIdentity();
 
   let body: {
@@ -197,7 +203,25 @@ export async function POST(req: NextRequest) {
     seats: seatRecords,
   };
 
-  await insertGame(record);
+  try {
+    await insertGame(record);
+  } catch (err) {
+    // Almost always a misconfigured deployment rather than a bug: the schema
+    // has not been applied, or the service-role key is missing. Say so plainly
+    // — an unhandled throw here becomes an HTML 500 that the browser reports as
+    // an unrelated JSON parse error.
+    const message = (err as Error).message;
+    const missingTable = /relation .* does not exist|schema cache/i.test(message);
+    return NextResponse.json(
+      {
+        error: missingTable
+          ? `The database is reachable but the tables are missing. Run supabase/migrations/0001_init.sql in the Supabase SQL editor. (${message})`
+          : `Could not save the game: ${message}`,
+        hint: '/api/health reports what is configured.',
+      },
+      { status: 500 },
+    );
+  }
 
   const res = NextResponse.json(gameView(record, identity), { status: 201 });
   persistIdentity(res, identity);

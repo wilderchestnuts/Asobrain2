@@ -170,6 +170,17 @@ session cookie and then redirects to wherever they were headed.
 
 ## 7. Check it works
 
+**Start here: open `https://your-app.vercel.app/api/health`.**
+
+It reports, in plain language, whether each variable is set and well-formed and
+whether the database is reachable with the tables in place. Almost every
+deployment problem shows up here in one line — a URL pasted from the dashboard
+instead of the API settings page, the publishable key in the secret slot, or a
+migration that was never run. Fix whatever it flags and redeploy before going
+further.
+
+Then:
+
 1. Open your deployed URL on the iPad. Enter an email, tap **Send link**.
 2. Open the email on the same device and tap the link. It should return to the
    app signed in. (Opening the link on a *different* device than the one that
@@ -187,6 +198,23 @@ never updates, see below.
 ---
 
 ## Troubleshooting
+
+**Always check `/api/health` first.** It names the broken thing directly.
+
+**"The string did not match the expected pattern" (Safari)**
+This is Safari failing to parse an error page as JSON — the real failure is
+underneath it. It used to mean a malformed `NEXT_PUBLIC_SUPABASE_URL`, which
+made every request fail. The app now survives that and reports it properly, so
+if you still see it, `/api/health` will say why.
+
+**"The database is reachable but the tables are missing"**
+The project exists but the schema was never applied. Run
+`supabase/migrations/0001_init.sql` in the Supabase SQL editor (step 2). This is
+easy to miss after recreating a Supabase project.
+
+**"This deployment has no database"**
+`SUPABASE_SECRET_KEY` (or `SUPABASE_SERVICE_ROLE_KEY`) is missing from the
+Vercel project. Without it the server cannot write games at all.
 
 **"Supabase is not configured on this deployment"**
 The env vars did not make it into the build. Check the spelling, check they are

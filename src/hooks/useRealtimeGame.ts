@@ -65,17 +65,29 @@ export function useRealtimeGame(gameId: string | null): RealtimeGame {
           cache: 'no-store',
           credentials: 'same-origin',
         });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as {
-            error?: string;
-          };
+        // Read as text first: an HTML error page would otherwise surface as a
+        // JSON parse error that says nothing about what actually failed.
+        const text = await res.text();
+        let parsed: (GameView & { error?: string }) | null = null;
+        try {
+          parsed = text ? (JSON.parse(text) as GameView & { error?: string }) : null;
+        } catch {
+          /* keep the raw body for the message below */
+        }
+
+        if (!res.ok || !parsed) {
           if (mine === generation.current) {
-            setError(body.error ?? `request failed (${res.status})`);
+            setError(
+              parsed?.error ??
+                `Could not load the game — server said ${res.status}: ${
+                  text.trim().slice(0, 200) || '(empty response)'
+                }`,
+            );
             setLoading(false);
           }
           return null;
         }
-        const next = (await res.json()) as GameView;
+        const next = parsed;
         if (mine === generation.current) applyView(next);
         return next;
       } catch (err) {

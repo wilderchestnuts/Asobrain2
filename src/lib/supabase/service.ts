@@ -8,7 +8,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { SUPABASE_URL } from './env';
+import { SUPABASE_URL, isUsableSupabaseUrl } from './env';
 
 /**
  * Read through a function rather than a module constant, with a loud tripwire
@@ -28,7 +28,7 @@ export function serviceRoleKey(): string {
 
 /** Whether API routes can do authoritative writes against Postgres. */
 export const isServerSupabaseConfigured = (): boolean =>
-  Boolean(SUPABASE_URL && serviceRoleKey());
+  Boolean(isUsableSupabaseUrl() && serviceRoleKey());
 
 let cached: SupabaseClient | null = null;
 

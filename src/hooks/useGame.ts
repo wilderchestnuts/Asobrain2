@@ -89,12 +89,11 @@ export function useGame(gameId: string | null): UseGame {
           return { ok: false, error: message };
         }
 
-        const payload = (await res.json().catch(() => ({}))) as GameView & {
-          error?: string;
-        };
-
-        if (!res.ok) {
-          const message = payload.error ?? `request failed (${res.status})`;
+        let payload: GameView;
+        try {
+          payload = await readJson<GameView>(res, 'That move did not go through');
+        } catch (err) {
+          const message = (err as Error).message;
           setActionError(message);
           return { ok: false, error: message };
         }
@@ -181,6 +180,42 @@ export interface CreateGameInput {
   isPublic?: boolean;
 }
 
+/**
+ * Read a response as JSON without letting a non-JSON body hide the real error.
+ *
+ * A server error often comes back as an HTML page, and calling `.json()` on it
+ * throws a parser error instead of the actual problem — in Safari that surfaces
+ * as "The string did not match the expected pattern", which says nothing useful
+ * about a failed database write.
+ */
+export async function readJson<T>(
+  res: Response,
+  fallback: string,
+): Promise<T> {
+  const text = await res.text();
+  let payload: (T & { error?: string }) | null = null;
+  try {
+    payload = text ? (JSON.parse(text) as T & { error?: string }) : null;
+  } catch {
+    // Not JSON — keep the body so the message below can quote it.
+  }
+
+  if (!res.ok) {
+    const detail =
+      payload?.error ??
+      (text.trim().slice(0, 200) || `empty response (${res.status})`);
+    throw new Error(`${fallback} — server said ${res.status}: ${detail}`);
+  }
+  if (!payload) {
+    throw new Error(
+      `${fallback} — the server returned ${res.status} but not JSON: ${
+        text.trim().slice(0, 200) || '(empty)'
+      }`,
+    );
+  }
+  return payload;
+}
+
 export async function createGame(input: CreateGameInput): Promise<GameView> {
   const res = await fetch('/api/games', {
     method: 'POST',
@@ -188,9 +223,7 @@ export async function createGame(input: CreateGameInput): Promise<GameView> {
     credentials: 'same-origin',
     body: JSON.stringify(input),
   });
-  const payload = (await res.json()) as GameView & { error?: string };
-  if (!res.ok) throw new Error(payload.error ?? 'could not create game');
-  return payload;
+  return readJson<GameView>(res, 'Could not create the game');
 }
 
 export interface GameListItem {
