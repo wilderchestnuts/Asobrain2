@@ -37,6 +37,7 @@ import type {
   Tradeable,
 } from './types';
 import {
+  COMMODITY_FOR_TERRAIN,
   COSTS,
   PRODUCING_TERRAINS,
   RESOURCES,
@@ -84,6 +85,11 @@ export const truePoints = (p: Player): number =>
 
 /** Physical card count in a real Catan box. */
 export const BANK_STOCK_PER_RESOURCE = 19;
+/** Cities & Knights ships fewer of each commodity than of each resource. */
+export const BANK_STOCK_PER_COMMODITY = 12;
+
+export const stockLimitFor = (what: Tradeable): number =>
+  isResource(what) ? BANK_STOCK_PER_RESOURCE : BANK_STOCK_PER_COMMODITY;
 
 /**
  * How many of a resource the bank still holds. Derived rather than stored:
@@ -92,7 +98,7 @@ export const BANK_STOCK_PER_RESOURCE = 19;
  */
 export function bankStock(state: GameState, resource: Tradeable): number {
   const held = state.players.reduce((sum, p) => sum + count(p.hand, resource), 0);
-  return BANK_STOCK_PER_RESOURCE - held;
+  return stockLimitFor(resource) - held;
 }
 
 /**
@@ -685,15 +691,25 @@ export function legalActions(
         out.push(...bankTradeActions(state, playerId));
         break;
       }
+      // The phase says *something* is owed, but not necessarily by the player
+      // asking. Both of these are offered only to whoever actually owes them —
+      // otherwise a bystander is handed a move the reducer will refuse.
       case 'move_robber': {
+        const owed = state.pending.some(
+          (t) => t.kind === 'robber' && t.playerId === playerId,
+        );
+        if (!owed) break;
         for (const hex of legalRobberHexes(state)) {
           out.push({ ...me, type: 'move_robber', hex });
         }
         break;
       }
       case 'steal': {
-        const task = state.pending.find((t) => t.kind === 'steal');
-        const victims = (task?.data?.victims as PlayerId[] | undefined) ?? [];
+        const task = state.pending.find(
+          (t) => t.kind === 'steal' && t.playerId === playerId,
+        );
+        if (!task) break;
+        const victims = (task.data?.victims as PlayerId[] | undefined) ?? [];
         if (victims.length === 0) {
           out.push({ ...me, type: 'steal', victim: null });
         }
@@ -850,6 +866,7 @@ export interface Production {
  * evaluate a spot without simulating a whole turn.
  */
 export function productionFor(state: GameState, roll: number): Production {
+  const ck = state.options.expansions.citiesAndKnights;
   const owed: Record<PlayerId, Hand> = {};
   const goldPicks: Record<PlayerId, number> = {};
   const byVertex = new Map<VertexId, Settlement>();
@@ -860,14 +877,28 @@ export function productionFor(state: GameState, roll: number): Production {
     if (!PRODUCING_TERRAINS.includes(hex.terrain)) continue;
     if (hexEquals(hex.coord, state.board.robber)) continue;
     const resource = RESOURCE_FOR_TERRAIN[hex.terrain];
+    const commodity = ck ? COMMODITY_FOR_TERRAIN[hex.terrain] : undefined;
+
     for (const v of hexVertices(hex.coord)) {
       const s = byVertex.get(v);
       if (!s) continue;
-      const yield_ = s.kind === 'city' ? 2 : 1;
+      const city = s.kind === 'city';
+      const yield_ = city ? 2 : 1;
+
       if (hex.terrain === 'gold') {
+        // Gold pays resources only — never commodities, even under C&K.
         goldPicks[s.owner] = (goldPicks[s.owner] ?? 0) + yield_;
-      } else if (resource) {
-        const hand = owed[s.owner] ?? (owed[s.owner] = {});
+        continue;
+      }
+      if (!resource) continue;
+
+      const hand = owed[s.owner] ?? (owed[s.owner] = {});
+      if (city && commodity) {
+        // A C&K city on mountains, forest or pasture takes one resource and
+        // one commodity rather than doubling up on the resource.
+        hand[resource] = count(hand, resource) + 1;
+        hand[commodity] = count(hand, commodity) + 1;
+      } else {
         hand[resource] = count(hand, resource) + yield_;
       }
     }

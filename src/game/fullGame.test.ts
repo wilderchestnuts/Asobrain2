@@ -96,7 +96,8 @@ function playGame(seed: string, maxSteps = 20000, overrides = {}): PlayResult {
 
   while (state.phase !== 'game_over' && steps < maxSteps) {
     // Whoever the rules are waiting on acts next; otherwise the current player.
-    const blocked = state.pending[0]?.playerId;
+    const blocked = state.pending.find((t) => t.kind !== 'resume')
+      ?.playerId;
     const actor = blocked ?? state.players[state.currentPlayer].id;
     const legal = allLegalActions(state, actor);
     if (legal.length === 0) break;

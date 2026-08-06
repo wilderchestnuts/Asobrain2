@@ -56,7 +56,8 @@ function playOut(state: GameState, seed: string, maxSteps = 30000) {
   const weight = (a: GameAction): number => weights[a.type] ?? 500;
 
   while (state.phase !== 'game_over' && steps < maxSteps) {
-    const blocked = state.pending[0]?.playerId;
+    const blocked = state.pending.find((t) => t.kind !== 'resume')
+      ?.playerId;
     const actor = blocked ?? state.players[state.currentPlayer].id;
     const legal = allLegalActions(state, actor);
     if (legal.length === 0) break;

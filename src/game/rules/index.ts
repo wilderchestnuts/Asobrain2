@@ -35,8 +35,13 @@
 
 import type { RulesModule } from '../engine';
 import { baseRules } from './base';
+import { citiesKnightsRules } from './citiesKnights';
 import { seafarersRules } from './seafarers';
 
-export const RULES_MODULES: RulesModule[] = [seafarersRules, baseRules];
+export const RULES_MODULES: RulesModule[] = [
+  citiesKnightsRules,
+  seafarersRules,
+  baseRules,
+];
 
-export { baseRules, seafarersRules };
+export { baseRules, citiesKnightsRules, seafarersRules };

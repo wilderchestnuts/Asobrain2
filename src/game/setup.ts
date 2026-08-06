@@ -6,6 +6,7 @@
  * state. Two games created from the same options are byte-identical.
  */
 
+import { buildProgressDecks } from './rules/citiesKnights';
 import { generateBoard } from './board';
 import { Rng } from './rng';
 import type {
@@ -82,13 +83,17 @@ export function createGame(opts: CreateGameOptions): GameState {
   if (opts.players.length < 2) throw new Error('a game needs at least 2 players');
   if (opts.players.length > 6) throw new Error('a game seats at most 6 players');
 
+  const expansions = {
+    ...DEFAULT_OPTIONS.expansions,
+    ...opts.options?.expansions,
+  };
   const options: GameOptions = {
     ...DEFAULT_OPTIONS,
+    // The target scales with the rule set unless the caller names one.
+    victoryPointsToWin:
+      opts.options?.victoryPointsToWin ?? defaultVictoryPoints(expansions),
     ...opts.options,
-    expansions: {
-      ...DEFAULT_OPTIONS.expansions,
-      ...opts.options?.expansions,
-    },
+    expansions,
   };
 
   const rng = new Rng(options.seed, 0);
@@ -151,7 +156,28 @@ export function createGame(opts: CreateGameOptions): GameState {
     state.barbarianAttacks = 0;
     state.metropolises = {};
     state.defenderOfCatan = {};
+    // Shuffled up front rather than on first use, so the decks are part of the
+    // initial state and `redactFor` has something concrete to strip.
+    state.progressDecks = buildProgressDecks(rng);
+    state.rngCursor = rng.cursor;
   }
 
   return state;
 }
+
+/**
+ * The customary target for a given rule set. Longer games need a higher bar:
+ * Cities & Knights hands out points faster, and Seafarers adds island bonuses
+ * on top. Callers may override it — the owners asked to be able to.
+ */
+export function defaultVictoryPoints(
+  expansions: GameOptions['expansions'],
+): number {
+  if (expansions.citiesAndKnights && expansions.seafarers) return 15;
+  if (expansions.citiesAndKnights) return 13;
+  if (expansions.seafarers) return 12;
+  return 10;
+}
+
+/** Sensible bounds for the setup screen's victory-point picker. */
+export const VICTORY_POINT_RANGE = { min: 5, max: 25 };

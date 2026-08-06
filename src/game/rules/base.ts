@@ -21,7 +21,15 @@ import type { ActionResult, GameAction } from '../actions';
 import { fail } from '../actions';
 import type { Ctx, RulesModule } from '../engine';
 import { hexEquals, vertexHexes } from '../hex';
-import { add, canAfford, count, subtract, toList, totalCards } from '../hand';
+import {
+  add,
+  ALL_TRADEABLES,
+  canAfford,
+  count,
+  subtract,
+  toList,
+  totalCards,
+} from '../hand';
 import {
   bankStock,
   currentPlayerOf,
@@ -238,7 +246,9 @@ function distributeProduction(
 ): void {
   const { owed, goldPicks } = productionFor(draft, roll);
 
-  for (const resource of RESOURCES) {
+  // Under C&K this loop also carries the three commodities, which obey the
+  // same bank-shortage rule as resources.
+  for (const resource of ALL_TRADEABLES) {
     const claimants = draft.players.filter(
       (p) => count(owed[p.id] ?? {}, resource) > 0,
     );

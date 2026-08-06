@@ -118,6 +118,11 @@ function checkVictory(state: GameState, ctx: Ctx): void {
   if (total < state.options.victoryPointsToWin) return;
   state.winner = player.id;
   state.phase = 'game_over';
+  // Nothing is owed once the game is decided. A win can land mid-interruption
+  // — a progress card that sends out the robber and takes the last point — and
+  // leaving that queued would strand the state in a phase nobody can act in.
+  state.pending = [];
+  delete state.activeTrade;
   state.log.push({
     turn: state.turn,
     playerId: player.id,
