@@ -250,6 +250,7 @@ export function GameScreen({ game }: { game: UseGame }) {
         open={sheet === 'trade'}
         onClose={() => setSheet(null)}
         state={state}
+        me={me}
         legal={legal}
         onAct={act}
       />
@@ -274,6 +275,11 @@ export function GameScreen({ game }: { game: UseGame }) {
 
       {actionError && (
         <Toast message={actionError} onDismiss={clearActionError} />
+      )}
+
+      {/* My own offer, waiting on the others. */}
+      {state.activeTrade && state.activeTrade.from === myPlayerId && (
+        <OutgoingTrade state={state} onAct={act} />
       )}
 
       {/* An active trade offer aimed at me needs answering wherever I am. */}
@@ -518,7 +524,11 @@ function BottomBar({
           <Button onClick={() => onOpen('cards')}>Cards &amp; knights</Button>
         )}
 
-        {(has('bank_trade') || has('offer_trade')) && (
+        {(has('bank_trade') ||
+          (isMyTurn &&
+            state.phase === 'main' &&
+            !state.activeTrade &&
+            totalCards(me?.hand ?? {}) > 0)) && (
           <Button onClick={() => onOpen('trade')}>Trade</Button>
         )}
 
@@ -649,27 +659,78 @@ function ChoiceSheet({
   );
 }
 
+/**
+ * Bank trades are a list of ready-made swaps; player trades are composed.
+ *
+ * The composer sends whatever the player builds rather than picking from an
+ * enumeration — the server validates it anyway, and enumerating every possible
+ * two-sided offer would be both enormous and useless to a human.
+ */
 function TradeSheet({
   open,
   onClose,
   state,
+  me,
   legal,
   onAct,
 }: {
   open: boolean;
   onClose: () => void;
   state: GameState;
+  me: Player | null;
   legal: GameAction[];
   onAct: (a: ClientAction) => void;
 }) {
+  const [give, setGive] = useState<Partial<Record<Tradeable, number>>>({});
+  const [want, setWant] = useState<Partial<Record<Tradeable, number>>>({});
+
   const bank = legal.filter((a) => a.type === 'bank_trade');
+  // `offer_trade` is never enumerated by legalActions — its space is unbounded
+  // — so the composer is offered on the situation instead, and the server
+  // validates whatever gets built.
+  const canOffer =
+    state.phase === 'main' &&
+    state.players[state.currentPlayer]?.id === me?.id &&
+    !state.activeTrade;
+  const ck = state.options.expansions.citiesAndKnights;
+  const kinds = ALL_TRADEABLES.filter(
+    (k) => ck || (RESOURCES as readonly string[]).includes(k),
+  );
+
+  const bump = (
+    set: typeof setGive,
+    current: Partial<Record<Tradeable, number>>,
+    k: Tradeable,
+    delta: number,
+    max: number,
+  ) => {
+    const next = Math.max(0, Math.min(max, (current[k] ?? 0) + delta));
+    set({ ...current, [k]: next });
+  };
+
+  const reset = () => {
+    setGive({});
+    setWant({});
+  };
+
   return (
-    <Sheet open={open} title="Trade" onClose={onClose}>
+    <Sheet
+      open={open}
+      title="Trade"
+      onClose={() => {
+        reset();
+        onClose();
+      }}
+    >
       <h3 style={{ fontWeight: 600, marginBottom: 8 }}>With the bank</h3>
       {bank.length === 0 ? (
-        <p style={{ opacity: 0.7 }}>Nothing you can afford to swap right now.</p>
+        <p style={{ opacity: 0.7, marginBottom: 18 }}>
+          Nothing you can afford to swap right now.
+        </p>
       ) : (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <div
+          style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 18 }}
+        >
           {bank.map((a, i) =>
             a.type === 'bank_trade' ? (
               <Button
@@ -686,12 +747,175 @@ function TradeSheet({
         </div>
       )}
 
+      {canOffer && !state.activeTrade && (
+        <>
+          <h3 style={{ fontWeight: 600, marginBottom: 8 }}>
+            Offer the other players
+          </h3>
+
+          <TradeRow
+            label="You give"
+            kinds={kinds}
+            values={give}
+            cap={(k) => handCount(me?.hand ?? {}, k)}
+            onBump={(k, d) =>
+              bump(setGive, give, k, d, handCount(me?.hand ?? {}, k))
+            }
+          />
+          <TradeRow
+            label="You want"
+            kinds={kinds}
+            values={want}
+            cap={() => 9}
+            onBump={(k, d) => bump(setWant, want, k, d, 9)}
+          />
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <Button
+              tone="primary"
+              wide
+              disabled={totalCards(give) === 0 || totalCards(want) === 0}
+              onClick={() => {
+                onAct({ type: 'offer_trade', give, receive: want });
+                reset();
+                onClose();
+              }}
+            >
+              Send offer
+            </Button>
+            <Button onClick={reset}>Clear</Button>
+          </div>
+        </>
+      )}
+
       {state.activeTrade && (
         <p style={{ marginTop: 16, opacity: 0.8 }}>
           There is already an offer on the table.
         </p>
       )}
     </Sheet>
+  );
+}
+
+function TradeRow({
+  label,
+  kinds,
+  values,
+  cap,
+  onBump,
+}: {
+  label: string;
+  kinds: Tradeable[];
+  values: Partial<Record<Tradeable, number>>;
+  cap: (k: Tradeable) => number;
+  onBump: (k: Tradeable, delta: number) => void;
+}) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <p style={{ fontSize: 14, opacity: 0.8, marginBottom: 6 }}>{label}</p>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {kinds.map((k) => {
+          const n = values[k] ?? 0;
+          const max = cap(k);
+          if (max === 0 && n === 0) return null;
+          return (
+            <div key={k} style={{ textAlign: 'center' }}>
+              <Card kind={k} count={n} selected={n > 0} small />
+              <div
+                style={{ display: 'flex', gap: 2, justifyContent: 'center', marginTop: 2 }}
+              >
+                <button
+                  type="button"
+                  aria-label={`one fewer ${k}`}
+                  onClick={() => onBump(k, -1)}
+                  style={stepper}
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  aria-label={`one more ${k}`}
+                  onClick={() => onBump(k, 1)}
+                  style={stepper}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+const stepper: React.CSSProperties = {
+  width: 22,
+  height: 30,
+  borderRadius: 6,
+  border: `1px solid ${surface('chrome-edge')}`,
+  background: surface('chrome'),
+  fontSize: 15,
+  lineHeight: 1,
+  touchAction: 'manipulation',
+};
+
+/**
+ * The offerer's side of a live trade: who has accepted, and the confirm that
+ * actually completes it.
+ */
+function OutgoingTrade({
+  state,
+  onAct,
+}: {
+  state: GameState;
+  onAct: (a: ClientAction) => void;
+}) {
+  const offer = state.activeTrade!;
+  const accepted = offer.accepted
+    .map((id) => state.players.find((p) => p.id === id))
+    .filter(Boolean) as Player[];
+
+  return (
+    <div
+      style={{
+        ...panel,
+        position: 'absolute',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        bottom: 150,
+        padding: 14,
+        borderRadius: 14,
+        border: `1px solid ${surface('chrome-edge')}`,
+        zIndex: 45,
+        boxShadow: '0 8px 30px rgba(0,0,0,.3)',
+        maxWidth: 520,
+      }}
+    >
+      <p style={{ marginBottom: 10 }}>
+        You offered {describeHand(offer.give)} for {describeHand(offer.receive)}
+      </p>
+      {accepted.length === 0 ? (
+        <p style={{ opacity: 0.75, marginBottom: 10 }}>
+          {offer.rejected.length > 0 ? 'Turned down so far.' : 'Waiting…'}
+        </p>
+      ) : (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          {accepted.map((p) => (
+            <Button
+              key={p.id}
+              tone="primary"
+              onClick={() => onAct({ type: 'confirm_trade', with: p.id })}
+            >
+              Trade with {p.name}
+            </Button>
+          ))}
+        </div>
+      )}
+      <Button onClick={() => onAct({ type: 'cancel_trade' })}>
+        Cancel offer
+      </Button>
+    </div>
   );
 }
 

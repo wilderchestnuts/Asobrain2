@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { applyAction } from '../reducer';
 import { createGame } from '../setup';
 import { chooseAction, evaluateVertex, mayAskForTrade, runBots } from './index';
+import { tradeResponders } from '../legal';
 import type { GameState } from '../types';
 
 const seats = (bots: number) => [
@@ -36,7 +37,14 @@ function playWithBots(state: GameState, maxSteps = 20000) {
 
   while (state.phase !== 'game_over' && steps < maxSteps) {
     const owed = state.pending.find((t) => t.kind !== 'resume');
-    const actorId = owed?.playerId ?? state.players[state.currentPlayer].id;
+    // A trade offer is answered by someone who is neither the current player
+    // nor carrying a pending entry, so it has to be named explicitly.
+    const responder =
+      state.phase === 'trade_response'
+        ? tradeResponders(state)[0]
+        : undefined;
+    const actorId =
+      owed?.playerId ?? responder ?? state.players[state.currentPlayer].id;
 
     const action = chooseAction(state, actorId);
     if (!action) break;
@@ -103,6 +111,13 @@ describe('trade rate limiting', () => {
       botTrade: { maxPerGame: 0, maxPerTurn: 0 },
     });
     expect(mayAskForTrade(state, state.players[1].id)).toBe(false);
+  });
+
+  it('will not offer on behalf of a human seat', () => {
+    // The caps in base.ts only tick for bots, so a policy that proposed for a
+    // human seat would be uncapped — it offered forever until this was fixed.
+    const state = game('human-seat', 1);
+    expect(mayAskForTrade(state, state.players[0].id)).toBe(false);
   });
 
   it('does not haggle when there is no human in the game', () => {

@@ -19,6 +19,7 @@ import {
   hexesTouchedBy,
   playerById,
   productionFor,
+  tradeResponders,
   truePoints,
 } from '../legal';
 import { pipsFor } from '../board';
@@ -128,7 +129,18 @@ export function chooseAction(
   const blocking = legal.filter((a) => BLOCKING.has(a.type));
   if (blocking.length > 0) return chooseBlocking(state, playerId, blocking);
 
-  // --- 2. opening placement ---
+  // --- 2. finish any trade business; leaving it hanging stalls the table ---
+  const respond = all(legal, 'respond_trade');
+  if (respond.length > 0) return answerOffer(state, playerId, respond);
+
+  // Our own offer came back answered. Take the first acceptance, or withdraw —
+  // an offer left on the table blocks the turn from ever ending.
+  const confirm = pick(legal, 'confirm_trade');
+  if (confirm) return confirm;
+  const cancel = pick(legal, 'cancel_trade');
+  if (cancel) return cancel;
+
+  // --- 3. opening placement ---
   if (state.phase === 'setup_first' || state.phase === 'setup_second') {
     const settlements = all(legal, 'build_settlement');
     if (settlements.length > 0) {
@@ -142,15 +154,15 @@ export function chooseAction(
     return pick(legal, 'end_turn') ?? null;
   }
 
-  // --- 3. roll ---
+  // --- 4. roll ---
   const roll = pick(legal, 'roll');
   if (roll) return roll;
 
-  // --- 4. build, best value first ---
+  // --- 5. build, best value first ---
   const build = chooseBuild(state, playerId, legal);
   if (build) return build;
 
-  // --- 5. trade, sparingly ---
+  // --- 6. trade, sparingly ---
   const trade = chooseTrade(state, playerId, legal);
   if (trade) return trade;
 
@@ -168,6 +180,35 @@ function best<T>(items: T[], score: (x: T) => number): T {
     }
   }
   return winner;
+}
+
+/**
+ * Accept an offer only when it is genuinely useful: it brings in something we
+ * hold none of, and costs something we have to spare. Everything else is
+ * declined immediately rather than left to time out.
+ */
+function answerOffer(
+  state: GameState,
+  playerId: PlayerId,
+  options: GameAction[],
+): GameAction {
+  const me = playerById(state, playerId);
+  const offer = state.activeTrade;
+  const accept = options.find(
+    (a) => a.type === 'respond_trade' && a.accept,
+  );
+  const decline =
+    options.find((a) => a.type === 'respond_trade' && !a.accept) ?? options[0];
+  if (!me || !offer || !accept) return decline;
+
+  // Their `give` comes to us; their `receive` is what we hand over.
+  const gaining = Object.entries(offer.give).some(
+    ([k, n]) => (n ?? 0) > 0 && count(me.hand, k as Tradeable) === 0,
+  );
+  const affordable = Object.entries(offer.receive).every(
+    ([k, n]) => count(me.hand, k as Tradeable) >= (n ?? 0) + 1,
+  );
+  return gaining && affordable ? accept : decline;
 }
 
 /** Resolve whatever is blocking the game, sensibly rather than at random. */
@@ -330,11 +371,46 @@ function chooseTrade(
     if (worthwhile.length > 0) return worthwhile[0];
   }
 
-  const offers = all(legal, 'offer_trade');
-  if (offers.length === 0) return null;
+  // `offer_trade` is never enumerated by legalActions — the space of possible
+  // offers is unbounded — so a bot that wants one has to construct it.
   if (!mayAskForTrade(state, playerId)) return null;
+  return composeOffer(state, playerId);
+}
 
-  return offers[0];
+/**
+ * Build one honest, straightforward offer: a card we have three or more of for
+ * one we have none of. Nothing clever, and nothing lopsided — a bot that haggles
+ * is a bot that gets ignored, and it only gets a handful of asks per game.
+ */
+function composeOffer(
+  state: GameState,
+  playerId: PlayerId,
+): GameAction | null {
+  const me = playerById(state, playerId);
+  if (!me) return null;
+
+  const surplus = RESOURCES.filter((r) => count(me.hand, r) >= 3).sort(
+    (a, b) => count(me.hand, b) - count(me.hand, a),
+  );
+  const missing = RESOURCES.filter((r) => count(me.hand, r) === 0).sort(
+    (a, b) => RESOURCE_VALUE[b] - RESOURCE_VALUE[a],
+  );
+  if (surplus.length === 0 || missing.length === 0) return null;
+
+  // Only ask someone who can actually supply it, or the offer is just noise.
+  const wanted = missing.find((r) =>
+    state.players.some(
+      (p) => p.id !== playerId && !p.resigned && count(p.hand, r) > 0,
+    ),
+  );
+  if (!wanted) return null;
+
+  return {
+    type: 'offer_trade',
+    playerId,
+    give: { [surplus[0]]: 1 },
+    receive: { [wanted]: 1 },
+  };
 }
 
 /** The rate limit that keeps bots from nagging. */
@@ -345,13 +421,20 @@ export function mayAskForTrade(state: GameState, playerId: PlayerId): boolean {
   const me = playerById(state, playerId);
   if (!me) return false;
 
+  // Only a bot seat is rate-limited, so only a bot seat may use this policy to
+  // offer. Proposing on behalf of a human would bypass the caps entirely — the
+  // counters in base.ts deliberately only tick for bots.
+  if (!me.isBot) return false;
+
   if ((me.botTradesMade ?? 0) >= caps.maxPerGame) return false;
   if ((me.botTradesThisTurn ?? 0) >= caps.maxPerTurn) return false;
   // Asked once and turned down already: leave it alone until next turn.
   if ((state.botTradeRefusals?.[playerId] ?? 0) > 0) return false;
 
   // Never haggle with another bot; it is noise nobody sees.
-  const humans = state.players.filter((p) => !p.isBot && !p.resigned);
+  const humans = state.players.filter(
+    (p) => !p.isBot && !p.resigned && p.id !== playerId,
+  );
   return humans.length > 0;
 }
 
@@ -392,9 +475,19 @@ export function runBots(
   for (let i = 0; i < maxSteps; i++) {
     if (current.phase === 'game_over') break;
 
-    // A bot acts when it is their turn, or when the rules are waiting on them.
+    // A bot acts when it is their turn, when the rules are waiting on them, or
+    // when they owe an answer to a trade offer — that last case has no pending
+    // entry and is not their turn, so it needs naming explicitly or an offer to
+    // a bot would hang the table forever.
     const owed = current.pending.find((t) => t.kind !== 'resume');
-    const actorId = owed?.playerId ?? current.players[current.currentPlayer]?.id;
+    const responder =
+      current.phase === 'trade_response'
+        ? tradeResponders(current).find(
+            (id) => playerById(current, id)?.isBot,
+          )
+        : undefined;
+    const actorId =
+      owed?.playerId ?? responder ?? current.players[current.currentPlayer]?.id;
     const actor = actorId ? playerById(current, actorId) : undefined;
     if (!actor?.isBot || actor.resigned) break;
 
