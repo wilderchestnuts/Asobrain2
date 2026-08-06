@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
 import { SUPABASE_ANON_KEY, SUPABASE_URL, siteUrl } from '@/lib/supabase/env';
 import { getServiceSupabase, serviceRoleKey } from '@/lib/supabase/service';
@@ -26,7 +27,10 @@ interface Check {
 const describeKey = (key: string): string =>
   key ? `set (${key.length} chars, starts "${key.slice(0, 11)}…")` : 'NOT SET';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Reading proves the tables exist; only writing proves a game can be saved.
+  // Opt-in, because it inserts and then removes a row.
+  const deep = req.nextUrl.searchParams.get('deep') === '1';
   const checks: Record<string, Check> = {};
 
   // --- URL ---
@@ -107,6 +111,56 @@ export async function GET() {
         : { ok: true, detail: 'present' };
     }
     checks.database = { ok: true, detail: 'reachable with the service-role key' };
+
+    if (deep) {
+      // Exercise exactly what "Start game" does: insert a game plus a seat,
+      // then clean up. Column mismatches, enum problems and row-level security
+      // surprises all surface here and nowhere else.
+      const probeId = crypto.randomUUID();
+      try {
+        const { error: gameError } = await db.from('games').insert({
+          id: probeId,
+          status: 'lobby',
+          options: { probe: true },
+          state: null,
+          version: 0,
+        });
+        if (gameError) throw new Error(`games insert: ${gameError.message}`);
+
+        const { error: seatError } = await db.from('game_players').insert({
+          game_id: probeId,
+          seat: 0,
+          player_id: 'p0',
+          name: 'probe',
+          color: 'red',
+          is_bot: false,
+        });
+        if (seatError) throw new Error(`game_players insert: ${seatError.message}`);
+
+        const { error: actionError } = await db.from('game_actions').insert({
+          game_id: probeId,
+          seat: 0,
+          action: { type: 'probe' },
+          applied_version: 0,
+        });
+        if (actionError) throw new Error(`game_actions insert: ${actionError.message}`);
+
+        checks.writeProbe = {
+          ok: true,
+          detail: 'a game, a seat and an action all saved and were removed again',
+        };
+      } catch (err) {
+        checks.writeProbe = { ok: false, detail: (err as Error).message };
+      } finally {
+        // Cascades clear the child rows.
+        await db.from('games').delete().eq('id', probeId);
+      }
+    } else {
+      checks.writeProbe = {
+        ok: true,
+        detail: 'not run — add ?deep=1 to actually save and delete a test game',
+      };
+    }
   }
 
   const ok = Object.values(checks).every((c) => c.ok);

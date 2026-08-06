@@ -179,6 +179,17 @@ instead of the API settings page, the publishable key in the secret slot, or a
 migration that was never run. Fix whatever it flags and redeploy before going
 further.
 
+If every check passes but a game still will not start, add `?deep=1`:
+
+```
+https://your-app.vercel.app/api/health?deep=1
+```
+
+That saves a throwaway game, a seat and an action, then deletes them — the same
+writes "Start game" performs. It is the only check that catches a column
+mismatch or a row-level-security rule, because reading a table proves it exists
+but not that it can be written to.
+
 Then:
 
 1. Open your deployed URL on the iPad. Enter an email, tap **Send link**.
