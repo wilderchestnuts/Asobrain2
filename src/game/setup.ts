@@ -45,6 +45,10 @@ export const DEFAULT_OPTIONS: GameOptions = {
   seed: 'catan',
   turnTimeLimit: 0,
   friendlyRobber: false,
+  // Deliberately stingy: a bot may ask a human to trade six times per game and
+  // never twice in one turn. Trade spam was the top complaint about the game
+  // this replaces; see DECISIONS.md.
+  botTrade: { maxPerGame: 6, maxPerTurn: 1 },
 };
 
 /** Pieces in a player's colour, straight off the box. */

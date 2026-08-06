@@ -254,6 +254,12 @@ export interface Player {
   progressCards?: ProgressCard[];
   /** Contribution to repelling the current barbarian attack. */
   defenderPoints?: number;
+
+  // --- bot trade rate limiting (see GameOptions.botTrade) ---
+  /** Trade offers this bot has made all game. */
+  botTradesMade?: number;
+  /** Trade offers this bot has made on the current turn. */
+  botTradesThisTurn?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -280,6 +286,19 @@ export interface GameOptions {
   turnTimeLimit: number;
   /** Friendly robber: cannot rob a player with 2 or fewer points. */
   friendlyRobber: boolean;
+  /**
+   * How often a bot may ask a human to trade.
+   *
+   * Constant trade requests were the single most-disliked thing about the game
+   * this replaces, so the caps are part of the rules rather than a bot tuning
+   * detail. A bot should feel like an opponent, never like a nag.
+   */
+  botTrade?: {
+    /** Offers one bot may make in an entire game. 0 disables bot trading. */
+    maxPerGame: number;
+    /** Offers one bot may make in a single turn. */
+    maxPerTurn: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +402,12 @@ export interface GameState {
   defenderOfCatan?: Record<PlayerId, number>;
   /** Which metropolises have been claimed. */
   metropolises?: Partial<Record<ImprovementTrack, PlayerId>>;
+
+  /**
+   * Bots whose offer a human has already declined this turn. A refused bot
+   * stays quiet for the rest of the turn rather than asking again.
+   */
+  botTradeRefusals?: Record<PlayerId, number>;
 
   winner?: PlayerId;
   /** Human-readable log, newest last. */

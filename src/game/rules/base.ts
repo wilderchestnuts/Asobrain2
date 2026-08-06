@@ -225,6 +225,9 @@ export function advanceTurn(draft: GameState, ctx: Ctx): void {
   draft.phase = 'roll';
   draft.devCardPlayedThisTurn = false;
   delete draft.activeTrade;
+  // Bot trade allowances are per turn; see GameOptions.botTrade.
+  for (const p of draft.players) p.botTradesThisTurn = 0;
+  draft.botTradeRefusals = {};
   for (const m of lifecycleModules(draft, ctx)) m.onTurnStart?.(draft, ctx);
 }
 
@@ -654,6 +657,10 @@ function handle(
       if (!canAfford(actor.hand, action.give)) {
         return fail('you do not hold what you are offering');
       }
+      if (actor.isBot) actor.botTradesMade = (actor.botTradesMade ?? 0) + 1;
+      if (actor.isBot) {
+        actor.botTradesThisTurn = (actor.botTradesThisTurn ?? 0) + 1;
+      }
       const invited = (action.to ?? []).filter((id) => id !== actor.id);
       if (invited.some((id) => !playerById(draft, id))) {
         return fail('no such player');
@@ -680,6 +687,12 @@ function handle(
       }
       if (!tradeResponders(draft).includes(action.playerId)) {
         return fail('that offer is not open to you');
+      }
+      if (!action.accept && !actor.isBot) {
+        // A human turning a bot down silences it for the rest of the turn.
+        draft.botTradeRefusals ??= {};
+        draft.botTradeRefusals[offer.from] =
+          (draft.botTradeRefusals[offer.from] ?? 0) + 1;
       }
       if (action.accept) {
         if (!canAfford(actor.hand, offer.receive)) {
