@@ -17,6 +17,7 @@ import type { NextRequest } from 'next/server';
 import { SUPABASE_ANON_KEY, SUPABASE_URL, siteUrl } from '@/lib/supabase/env';
 import { getServiceSupabase, serviceRoleKey } from '@/lib/supabase/service';
 import { describeDbError } from '@/lib/db';
+import { createGame } from '@/game/setup';
 
 export const dynamic = 'force-dynamic';
 
@@ -171,6 +172,42 @@ export async function GET(req: NextRequest) {
           ok: true,
           detail: 'a game, a seat and an action all saved and were removed again',
         };
+
+        // Second probe: the *real* payload. If the minimal insert above works
+        // and this one does not, the problem is the data rather than the
+        // connection — which is the bisect worth having in one request.
+        const realId = crypto.randomUUID();
+        try {
+          const state = createGame({
+            id: realId,
+            options: { seed: 'healthprobe' },
+            players: [
+              { id: 'p0', name: 'probe A', color: 'red', isBot: false },
+              { id: 'p1', name: 'probe B', color: 'blue', isBot: false },
+            ],
+          });
+          const { error } = await db.from('games').insert({
+            id: realId,
+            created_by: null,
+            created_by_guest: `guest_${'x'.repeat(16)}`,
+            status: 'lobby',
+            options: { seed: 'healthprobe', expansions: {} },
+            state,
+            version: 0,
+          });
+          if (error) throw new Error(describeDbError(error));
+          checks.writeProbeFullGame = {
+            ok: true,
+            detail: `a complete game state saved (${JSON.stringify(state).length} bytes)`,
+          };
+        } catch (err) {
+          checks.writeProbeFullGame = {
+            ok: false,
+            detail: `the minimal insert worked but a real game did not: ${(err as Error).message}`,
+          };
+        } finally {
+          await db.from('games').delete().eq('id', realId);
+        }
       } catch (err) {
         checks.writeProbe = { ok: false, detail: (err as Error).message };
         checks.writeProbeHint = {
