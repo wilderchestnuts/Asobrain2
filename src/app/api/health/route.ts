@@ -14,7 +14,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-import { SUPABASE_ANON_KEY, SUPABASE_URL, siteUrl } from '@/lib/supabase/env';
+import {
+  SUPABASE_ANON_KEY,
+  SUPABASE_URL,
+  siteUrl,
+  supabaseUrlWasNormalized,
+} from '@/lib/supabase/env';
 import { getServiceSupabase, serviceRoleKey } from '@/lib/supabase/service';
 import { describeDbError } from '@/lib/db';
 import { createGame } from '@/game/setup';
@@ -62,11 +67,14 @@ export async function GET(req: NextRequest) {
         problems.push('it ends in a double slash, which produces an invalid REST path');
       }
       urlOk = problems.length === 0;
+      const corrected = supabaseUrlWasNormalized()
+        ? ` (corrected from "${process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()}" — the variable should be the bare project URL, though it now works either way)`
+        : '';
       checks.supabaseUrl = {
         ok: urlOk,
         detail: problems.length
           ? `${SUPABASE_URL} — ${problems.join('; ')}`
-          : SUPABASE_URL,
+          : `${SUPABASE_URL}${corrected}`,
       };
       checks.restEndpoint = {
         ok: true,

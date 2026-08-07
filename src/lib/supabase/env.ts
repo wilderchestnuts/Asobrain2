@@ -9,9 +9,49 @@
  * dynamically, because Next.js inlines them at build time by textual match.
  */
 
+/**
+ * Service paths the SDK appends for itself. Pasting one of these *into* the
+ * project URL is an easy mistake — the Supabase docs show the REST endpoint
+ * prominently, and it looks like the thing being asked for — and it fails in a
+ * thoroughly unhelpful way: the SDK builds `…/rest/v1/rest/v1/games`, and the
+ * gateway answers "Invalid path specified in request URL" with no clue as to
+ * why. Strip them rather than making people debug it.
+ */
+const SDK_SUFFIXES = [
+  '/rest/v1',
+  '/auth/v1',
+  '/storage/v1',
+  '/functions/v1',
+  '/graphql/v1',
+  '/realtime/v1',
+];
+
+/**
+ * Reduce whatever was pasted to the bare origin Supabase expects: no trailing
+ * slashes, no service path.
+ */
+export function normalizeSupabaseUrl(raw: string | undefined): string {
+  let url = (raw ?? '').trim().replace(/\/+$/, '');
+  if (!url) return '';
+  for (const suffix of SDK_SUFFIXES) {
+    if (url.toLowerCase().endsWith(suffix)) {
+      url = url.slice(0, -suffix.length).replace(/\/+$/, '');
+      break;
+    }
+  }
+  return url;
+}
+
+/** Whether the configured URL had to be corrected, so health can say so. */
+export const supabaseUrlWasNormalized = (): boolean => {
+  const raw = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() ?? '';
+  return Boolean(raw) && raw !== normalizeSupabaseUrl(raw);
+};
+
 /** Public project URL. Safe to expose. */
-export const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || '';
+export const SUPABASE_URL = normalizeSupabaseUrl(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+);
 
 /**
  * Anon/publishable key. Safe to expose — it is RLS-gated. Supabase renamed

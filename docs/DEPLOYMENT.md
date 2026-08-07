@@ -212,6 +212,13 @@ never updates, see below.
 
 **Always check `/api/health` first.** It names the broken thing directly.
 
+**"Invalid path specified in request URL"**
+`NEXT_PUBLIC_SUPABASE_URL` had a service path on the end, usually
+`https://<ref>.supabase.co/rest/v1`. The SDK appends `rest/v1` itself, so every
+request went to `.../rest/v1/rest/v1/...`. The app strips these suffixes now, so
+it works either way, but the variable should be the bare project URL:
+`https://<ref>.supabase.co` with nothing after `.co`.
+
 **"The string did not match the expected pattern" (Safari)**
 This is Safari failing to parse an error page as JSON — the real failure is
 underneath it. It used to mean a malformed `NEXT_PUBLIC_SUPABASE_URL`, which
