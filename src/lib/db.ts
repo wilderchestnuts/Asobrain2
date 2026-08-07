@@ -197,6 +197,27 @@ const toGame = (g: GameRow, seats: SeatRow[]): GameRecord => ({
 // Public API
 // ---------------------------------------------------------------------------
 
+/**
+ * Full detail from a PostgREST error.
+ *
+ * `message` alone routinely omits the useful part — the machine-readable code,
+ * the constraint that failed, or the hint PostgREST already worked out. When a
+ * write fails on someone else's deployment, this is the difference between a
+ * diagnosis and a guessing game.
+ */
+export function describeDbError(
+  error: { message: string; code?: string; details?: string; hint?: string },
+): string {
+  return [
+    error.message,
+    error.code && `code=${error.code}`,
+    error.details && `details=${error.details}`,
+    error.hint && `hint=${error.hint}`,
+  ]
+    .filter(Boolean)
+    .join(' | ');
+}
+
 export async function insertGame(record: GameRecord): Promise<GameRecord> {
   const db = getServiceSupabase();
   if (!db) {
@@ -215,7 +236,7 @@ export async function insertGame(record: GameRecord): Promise<GameRecord> {
     state: record.state,
     version: record.version,
   });
-  if (gameError) throw new Error(`insert game: ${gameError.message}`);
+  if (gameError) throw new Error(`insert game: ${describeDbError(gameError)}`);
 
   const { error: seatError } = await db.from('game_players').insert(
     record.seats.map((s) => ({
@@ -230,7 +251,7 @@ export async function insertGame(record: GameRecord): Promise<GameRecord> {
       bot_difficulty: s.botDifficulty,
     })),
   );
-  if (seatError) throw new Error(`insert seats: ${seatError.message}`);
+  if (seatError) throw new Error(`insert seats: ${describeDbError(seatError)}`);
 
   return record;
 }

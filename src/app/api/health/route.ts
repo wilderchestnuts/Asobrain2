@@ -16,6 +16,7 @@ import type { NextRequest } from 'next/server';
 
 import { SUPABASE_ANON_KEY, SUPABASE_URL, siteUrl } from '@/lib/supabase/env';
 import { getServiceSupabase, serviceRoleKey } from '@/lib/supabase/service';
+import { describeDbError } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -44,13 +45,34 @@ export async function GET(req: NextRequest) {
     };
   } else {
     try {
-      const host = new URL(SUPABASE_URL).hostname;
+      const parsed = new URL(SUPABASE_URL);
       urlOk = true;
+      // Show the whole thing, not just the host: a stray path or a doubled
+      // slash is invisible otherwise, and it is exactly what breaks the REST
+      // URL the SDK builds from it. None of it is secret.
+      const problems: string[] = [];
+      if (!parsed.hostname.endsWith('.supabase.co')) {
+        problems.push('not a *.supabase.co host — is this the dashboard URL rather than the Project URL?');
+      }
+      if (parsed.pathname !== '/' && parsed.pathname !== '') {
+        problems.push(`it has a path ("${parsed.pathname}") — the Project URL should be the bare origin`);
+      }
+      if (SUPABASE_URL.endsWith('//')) {
+        problems.push('it ends in a double slash, which produces an invalid REST path');
+      }
+      urlOk = problems.length === 0;
       checks.supabaseUrl = {
+        ok: urlOk,
+        detail: problems.length
+          ? `${SUPABASE_URL} — ${problems.join('; ')}`
+          : SUPABASE_URL,
+      };
+      checks.restEndpoint = {
         ok: true,
-        detail: host.endsWith('.supabase.co')
-          ? host
-          : `${host} (not a *.supabase.co host — is this the Project URL and not the dashboard URL?)`,
+        detail: new URL(
+          'rest/v1',
+          SUPABASE_URL.endsWith('/') ? SUPABASE_URL : `${SUPABASE_URL}/`,
+        ).href,
       };
     } catch {
       checks.supabaseUrl = {
@@ -125,7 +147,7 @@ export async function GET(req: NextRequest) {
           state: null,
           version: 0,
         });
-        if (gameError) throw new Error(`games insert: ${gameError.message}`);
+        if (gameError) throw new Error(`games insert: ${describeDbError(gameError)}`);
 
         const { error: seatError } = await db.from('game_players').insert({
           game_id: probeId,
@@ -135,7 +157,7 @@ export async function GET(req: NextRequest) {
           color: 'red',
           is_bot: false,
         });
-        if (seatError) throw new Error(`game_players insert: ${seatError.message}`);
+        if (seatError) throw new Error(`game_players insert: ${describeDbError(seatError)}`);
 
         const { error: actionError } = await db.from('game_actions').insert({
           game_id: probeId,
@@ -143,7 +165,7 @@ export async function GET(req: NextRequest) {
           action: { type: 'probe' },
           applied_version: 0,
         });
-        if (actionError) throw new Error(`game_actions insert: ${actionError.message}`);
+        if (actionError) throw new Error(`game_actions insert: ${describeDbError(actionError)}`);
 
         checks.writeProbe = {
           ok: true,
@@ -151,6 +173,11 @@ export async function GET(req: NextRequest) {
         };
       } catch (err) {
         checks.writeProbe = { ok: false, detail: (err as Error).message };
+        checks.writeProbeHint = {
+          ok: false,
+          detail:
+            'Compare restEndpoint above with what the Supabase dashboard shows under Settings → API.',
+        };
       } finally {
         // Cascades clear the child rows.
         await db.from('games').delete().eq('id', probeId);
