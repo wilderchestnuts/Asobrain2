@@ -55,7 +55,7 @@ export function VertexSpot({
           />
         </>
       )}
-      {pending && <ConfirmBadge size={size} dy={-size * 0.62} />}
+      {pending && <ConfirmBadge size={size} dy={-size * BADGE_DY} />}
       <circle
         data-tap-target="vertex"
         role="button"
@@ -64,9 +64,29 @@ export function VertexSpot({
         fill="transparent"
         onPointerUp={onTap}
       />
+      {/*
+        The badge floats above the spot, and it is the thing a player actually
+        aims at once it appears — so it needs its own hit area. Without this the
+        confirm tap lands on nothing, which is exactly how a placement gets
+        stuck on a phone.
+      */}
+      {pending && (
+        <circle
+          data-tap-target="vertex"
+          role="button"
+          aria-label={`Confirm: ${label}`}
+          cy={-size * BADGE_DY}
+          r={Math.max(hitRadius, size * 0.34)}
+          fill="transparent"
+          onPointerUp={onTap}
+        />
+      )}
     </g>
   );
 }
+
+/** How far above the spot the confirm badge sits, in hex radii. */
+export const BADGE_DY = 0.62;
 
 /** "Tap again to build" affordance shown over a pending selection. */
 export function ConfirmBadge({ size, dy }: { size: number; dy: number }) {

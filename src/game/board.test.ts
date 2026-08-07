@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   generateBoard,
+  goldBudget,
   isLandTerrain,
   landTerrains,
   numberTokens,
@@ -239,12 +240,49 @@ describe('generateBoard', () => {
     expect(map.get(hexKey(board.pirate as HexCoord))?.terrain).toBe('sea');
   });
 
-  it('turns the requested number of land hexes to gold, all numbered', () => {
+  it('caps gold by board size, however much is asked for', () => {
+    // Gold pays any resource, so it is strictly stronger than an ordinary hex
+    // on the same number. A classic 19-hex board can carry one without the
+    // whole game collapsing onto it.
     const board = boardFor('gold', { goldHexCount: 3 });
     const gold = board.hexes.filter((h) => h.terrain === 'gold');
-    expect(gold).toHaveLength(3);
+    expect(gold).toHaveLength(goldBudget(19));
+    expect(gold.length).toBeLessThanOrEqual(1);
     for (const hex of gold) expect(hex.number).toBeDefined();
     expect(landHexes(board)).toHaveLength(19);
+  });
+
+  it('allows more gold on a bigger board', () => {
+    expect(goldBudget(19)).toBe(1);
+    expect(goldBudget(37)).toBe(3);
+    expect(goldBudget(8)).toBe(0);
+  });
+
+  it('gives gold the least likely numbers on the board', () => {
+    // Checked across many seeds because a single board could be a coincidence.
+    for (let i = 0; i < 60; i++) {
+      const board = boardFor(`gold-weak-${i}`, {
+        goldHexCount: 4,
+        boardRadius: 3,
+      });
+      const gold = board.hexes.filter((h) => h.terrain === 'gold');
+      if (gold.length === 0) continue;
+
+      const ordinary = board.hexes.filter(
+        (h) =>
+          h.terrain !== 'gold' &&
+          h.terrain !== 'desert' &&
+          h.number !== undefined,
+      );
+      const worstGold = Math.max(...gold.map((h) => pipsFor(h.number!)));
+      const medianOrdinary =
+        ordinary.map((h) => pipsFor(h.number!)).sort((a, b) => a - b)[
+          Math.floor(ordinary.length / 2)
+        ];
+      // Never a 6 or an 8, and no stronger than a typical hex.
+      expect(worstGold).toBeLessThan(5);
+      expect(worstGold).toBeLessThanOrEqual(medianOrdinary);
+    }
   });
 
   it('scales to larger radii', () => {

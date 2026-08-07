@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { Board } from '@/components/board/Board';
+import { Board, type Pending } from '@/components/board/Board';
 import {
   Button,
   Card,
@@ -57,7 +57,9 @@ export function GameScreen({ game }: { game: UseGame }) {
     game;
 
   const [mode, setMode] = useState<BuildMode>(null);
+  const [pending, setPending] = useState<Pending>(null);
   const [sheet, setSheet] = useState<'trade' | 'cards' | 'log' | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [discard, setDiscard] = useState<Partial<Record<Tradeable, number>>>({});
 
   const legal = useMemo(
@@ -85,6 +87,7 @@ export function GameScreen({ game }: { game: UseGame }) {
   const act = useCallback(
     async (action: ClientAction) => {
       setMode(null);
+      setPending(null);
       await send(action);
     },
     [send],
@@ -147,7 +150,18 @@ export function GameScreen({ game }: { game: UseGame }) {
         overflow: 'hidden',
       }}
     >
-      <PlayerStrip state={state} myPlayerId={myPlayerId} />
+      <PlayerStrip
+        state={state}
+        myPlayerId={myPlayerId}
+        onOpenMenu={() => setMenuOpen(true)}
+      />
+
+      <GameMenu
+        open={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        state={state}
+        onResign={() => void act({ type: 'resign' })}
+      />
 
       <div style={{ flex: 1, minHeight: 0 }}>
         <Board
@@ -166,8 +180,31 @@ export function GameScreen({ game }: { game: UseGame }) {
           onVertexTap={onVertexTap}
           onEdgeTap={onEdgeTap}
           onHexTap={onHexTap}
+          onPendingChange={setPending}
+          barbarianPosition={
+            state.options.expansions.citiesAndKnights
+              ? (state.barbarianPosition ?? 0)
+              : undefined
+          }
         />
       </div>
+
+      {/*
+        Confirming by tapping a small badge on the board is hard on a phone, so
+        the choice is repeated as a full-width bar within thumb reach. Both
+        routes commit the same action.
+      */}
+      {pending && (
+        <ConfirmBar
+          label={describePending(pending, mode, vertexGhostFor(mode), edgeGhostFor(mode))}
+          onConfirm={() => {
+            if (pending.kind === 'vertex') onVertexTap(pending.id);
+            else if (pending.kind === 'edge') onEdgeTap(pending.id);
+            else onHexTap(pending.coord);
+          }}
+          onCancel={() => setPending(null)}
+        />
+      )}
 
       <BottomBar
         state={state}
@@ -301,9 +338,11 @@ export function GameScreen({ game }: { game: UseGame }) {
 function PlayerStrip({
   state,
   myPlayerId,
+  onOpenMenu,
 }: {
   state: GameState;
   myPlayerId: string | null;
+  onOpenMenu: () => void;
 }) {
   const styles = playerStyles(state.players);
   const ck = state.options.expansions.citiesAndKnights;
@@ -390,23 +429,18 @@ function PlayerStrip({
         );
       })}
 
-      {ck && (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            padding: '4px 10px',
-            fontSize: 12,
-            minWidth: 108,
-          }}
-        >
-          <span>Barbarians</span>
-          <strong style={{ fontSize: 16 }}>
-            {state.barbarianPosition ?? 0} / 7
-          </strong>
-        </div>
-      )}
+      <div
+        style={{
+          marginLeft: 'auto',
+          display: 'flex',
+          alignItems: 'center',
+          paddingLeft: 6,
+        }}
+      >
+        <Button tone="ghost" onClick={onOpenMenu}>
+          ☰
+        </Button>
+      </div>
     </div>
   );
 }
@@ -1101,6 +1135,109 @@ function WinnerOverlay({
   );
 }
 
+/**
+ * The confirm step, repeated where a thumb can reach it.
+ *
+ * Sits directly above the action bar so it never overlaps the board art the
+ * player is trying to look at while deciding.
+ */
+function ConfirmBar({
+  label,
+  onConfirm,
+  onCancel,
+}: {
+  label: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div
+      style={{
+        ...panel,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexShrink: 0,
+        padding: '8px 12px',
+        borderTop: `1px solid ${surface('chrome-edge')}`,
+        borderBottom: `1px solid ${surface('chrome-edge')}`,
+      }}
+    >
+      <span style={{ fontSize: 15, flex: 1, minWidth: 0 }}>{label}</span>
+      <Button tone="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+      <Button tone="primary" wide onClick={onConfirm}>
+        Place here
+      </Button>
+    </div>
+  );
+}
+
+/** Game-level actions that are not moves: leaving, resigning, house rules. */
+function GameMenu({
+  open,
+  onClose,
+  state,
+  onResign,
+}: {
+  open: boolean;
+  onClose: () => void;
+  state: GameState;
+  onResign: () => void;
+}) {
+  const [confirmResign, setConfirmResign] = useState(false);
+  const link = typeof window === 'undefined' ? '' : window.location.href;
+
+  return (
+    <Sheet open={open} title="Menu" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Button wide onClick={() => void navigator.clipboard?.writeText(link)}>
+          Copy the invite link
+        </Button>
+        <a href="/" style={{ display: 'block' }}>
+          <Button wide>Back to my games</Button>
+        </a>
+
+        <hr style={{ borderColor: surface('chrome-edge'), margin: '6px 0' }} />
+
+        <p style={{ fontSize: 13, opacity: 0.75 }}>
+          Playing to {state.options.victoryPointsToWin} points ·{' '}
+          {state.options.expansions.seafarers ? 'Seafarers' : 'no Seafarers'} ·{' '}
+          {state.options.expansions.citiesAndKnights
+            ? 'Cities & Knights'
+            : 'no Cities & Knights'}
+        </p>
+        <p style={{ fontSize: 13, opacity: 0.75 }}>
+          Board: {state.options.scenario} · seed {state.options.seed}
+        </p>
+
+        <hr style={{ borderColor: surface('chrome-edge'), margin: '6px 0' }} />
+
+        {/*
+          Resigning ends this player's game for good, so it asks twice. There is
+          no "restart": a new game is a new board, which the lobby already does.
+        */}
+        {confirmResign ? (
+          <>
+            <p style={{ fontSize: 14 }}>
+              Resign for good? The others carry on without you.
+            </p>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button tone="danger" wide onClick={onResign}>
+                Yes, resign
+              </Button>
+              <Button onClick={() => setConfirmResign(false)}>Keep playing</Button>
+            </div>
+          </>
+        ) : (
+          <Button onClick={() => setConfirmResign(true)}>Resign</Button>
+        )}
+      </div>
+    </Sheet>
+  );
+}
+
 function Centered({ children }: { children: React.ReactNode }) {
   return (
     <div
@@ -1120,6 +1257,25 @@ function Centered({ children }: { children: React.ReactNode }) {
 // ---------------------------------------------------------------------------
 // Deriving highlights from legal moves
 // ---------------------------------------------------------------------------
+
+const vertexGhostFor = (mode: BuildMode): 'settlement' | 'city' | 'knight' =>
+  mode === 'city' ? 'city' : mode === 'knight' ? 'knight' : 'settlement';
+
+const edgeGhostFor = (mode: BuildMode): 'road' | 'ship' =>
+  mode === 'ship' ? 'ship' : 'road';
+
+/** Plain-language description of what confirming would do. */
+function describePending(
+  pending: NonNullable<Pending>,
+  mode: BuildMode,
+  vertexGhost: 'settlement' | 'city' | 'knight',
+  edgeGhost: 'road' | 'ship',
+): string {
+  if (pending.kind === 'hex') return 'Move here?';
+  if (pending.kind === 'edge') return `Build a ${edgeGhost} here?`;
+  if (mode === 'wall') return 'Build a city wall here?';
+  return `Build a ${vertexGhost} here?`;
+}
 
 const actionTypeFor = (mode: BuildMode): string =>
   mode === 'settlement'

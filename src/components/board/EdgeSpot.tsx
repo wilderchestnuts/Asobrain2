@@ -3,7 +3,7 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 import { surface } from '@/lib/theme';
-import { ConfirmBadge, type SpotProps } from './VertexSpot';
+import { BADGE_DY, ConfirmBadge, type SpotProps } from './VertexSpot';
 
 /**
  * A legal build spot on an edge. The marker is a capsule lying along the edge
@@ -22,18 +22,13 @@ export function EdgeSpot({
 }: SpotProps & { angle: number }) {
   return (
     <g transform={`translate(${x} ${y})`}>
+      {/*
+        A plain capsule, no pulsing halo behind it. The animation added motion
+        without adding information, and on a board full of legal road spots it
+        was just noise.
+      */}
       {!pending && (
         <g transform={`rotate(${angle.toFixed(2)})`}>
-          <rect
-            className="asb-pulse"
-            x={-size * 0.34}
-            y={-size * 0.13}
-            width={size * 0.68}
-            height={size * 0.26}
-            rx={size * 0.13}
-            fill={surface('highlight')}
-            opacity={0.32}
-          />
           <rect
             x={-size * 0.26}
             y={-size * 0.06}
@@ -46,7 +41,7 @@ export function EdgeSpot({
           />
         </g>
       )}
-      {pending && <ConfirmBadge size={size} dy={-size * 0.58} />}
+      {pending && <ConfirmBadge size={size} dy={-size * BADGE_DY} />}
       <circle
         data-tap-target="edge"
         role="button"
@@ -55,6 +50,18 @@ export function EdgeSpot({
         fill="transparent"
         onPointerUp={onTap}
       />
+      {/* The badge needs its own hit area — see VertexSpot. */}
+      {pending && (
+        <circle
+          data-tap-target="edge"
+          role="button"
+          aria-label={`Confirm: ${label}`}
+          cy={-size * BADGE_DY}
+          r={Math.max(hitRadius, size * 0.34)}
+          fill="transparent"
+          onPointerUp={onTap}
+        />
+      )}
     </g>
   );
 }

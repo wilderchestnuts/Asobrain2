@@ -40,9 +40,59 @@ export function Hex({ coord, terrain, size }: HexProps) {
         fill="currentColor"
         stroke="none"
       >
-        {TERRAIN_GLYPH[terrain](size)}
+        {RING_TERRAINS.includes(terrain) ? (
+          <MotifRing terrain={terrain} size={size} />
+        ) : (
+          TERRAIN_GLYPH[terrain](size)
+        )}
       </g>
     </g>
+  );
+}
+
+/**
+ * Terrains whose art moves out to a ring.
+ *
+ * The number token sits dead centre and covers about a third of the hex, so a
+ * centred glyph is hidden under it exactly when the hex matters most. These get
+ * their motif repeated around the band between the token and the hex edge,
+ * where it stays visible and still reads as "this is a forest" at a glance.
+ */
+const RING_TERRAINS: Terrain[] = [
+  'hills',
+  'forest',
+  'pasture',
+  'fields',
+  'mountains',
+  'gold',
+];
+
+/** Where the ring sits, as a fraction of the hex radius. */
+const RING_RADIUS = 0.63;
+/** How large each motif is, relative to the full-size glyph. */
+const MOTIF_SCALE = 0.34;
+/** Six reads as clutter and three as an accident; four sits between them. */
+const MOTIF_ANGLES = [90, 210, 330];
+
+function MotifRing({ terrain, size }: { terrain: Terrain; size: number }) {
+  const r = size * RING_RADIUS;
+  return (
+    <>
+      {MOTIF_ANGLES.map((deg) => {
+        const rad = (deg * Math.PI) / 180;
+        return (
+          <g
+            key={deg}
+            transform={`translate(${(Math.cos(rad) * r).toFixed(2)} ${(
+              Math.sin(rad) * r
+            ).toFixed(2)}) scale(${MOTIF_SCALE})`}
+            opacity={0.85}
+          >
+            {TERRAIN_GLYPH[terrain](size)}
+          </g>
+        );
+      })}
+    </>
   );
 }
 
@@ -129,11 +179,17 @@ const TERRAIN_GLYPH: Record<Terrain, (s: number) => ReactElement> = {
         />
       </>,
     ),
+  // A mine mouth with coins spilling out. Gold used to be a star in a yellow
+  // hex, which was nearly indistinguishable from fields at a glance.
   gold: (s) =>
     g(
       s,
       <>
-        <path d="M0 -46 L12 -14 L46 -14 L18 6 L29 38 L0 18 L-29 38 L-18 6 L-46 -14 L-12 -14 Z" />
+        <path d="M-42 34 L-26 -18 Q0 -34 26 -18 L42 34 Z" opacity={0.55} />
+        <path d="M-24 34 Q-24 -6 0 -6 Q24 -6 24 34 Z" />
+        <circle cx={-16} cy={20} r={9} />
+        <circle cx={4} cy={26} r={11} />
+        <circle cx={22} cy={16} r={8} />
       </>,
     ),
   fog: (s) =>

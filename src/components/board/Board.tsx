@@ -75,10 +75,19 @@ export interface BoardProps {
 
   /** Hexes the player may move the robber or pirate to. */
   highlightHexes?: readonly { q: number; r: number }[];
+  /** Cities & Knights: how far the barbarians have come, 0..attacksAt. */
+  barbarianPosition?: number;
+  barbarianAttacksAt?: number;
+  /**
+   * The spot awaiting confirmation, lifted out of the board so the screen can
+   * offer a full-width confirm button. Tapping a small floating badge is
+   * genuinely hard on a phone; a bar at the bottom is not.
+   */
+  onPendingChange?: (pending: Pending) => void;
   className?: string;
 }
 
-type Pending =
+export type Pending =
   | { kind: 'vertex'; id: VertexId }
   | { kind: 'edge'; id: EdgeId }
   | { kind: 'hex'; id: string; coord: { q: number; r: number } }
@@ -98,9 +107,19 @@ export function Board({
   onVertexTap,
   onEdgeTap,
   onHexTap,
+  onPendingChange,
+  barbarianPosition,
+  barbarianAttacksAt = 7,
   className,
 }: BoardProps) {
-  const [pending, setPending] = useState<Pending>(null);
+  const [pending, setPendingState] = useState<Pending>(null);
+  const setPending = useCallback(
+    (next: Pending) => {
+      setPendingState(next);
+      onPendingChange?.(next);
+    },
+    [onPendingChange],
+  );
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 1024, h: 768 });
 
@@ -293,6 +312,15 @@ export function Board({
             );
           })}
 
+          {/* --- barbarian approach, out in the water --- */}
+          {barbarianPosition !== undefined && (
+            <BarbarianTrack
+              bounds={bounds}
+              position={barbarianPosition}
+              attacksAt={barbarianAttacksAt}
+            />
+          )}
+
           {/* --- robber and pirate --- */}
           <Robber x={robberPt.x} y={robberPt.y} size={HEX_SIZE} />
           {piratePt && (
@@ -454,6 +482,107 @@ function ZoomControls({
         fit
       </button>
     </div>
+  );
+}
+
+/**
+ * The barbarians' approach, drawn along the top of the sea.
+ *
+ * A number in the corner does not convey "they are nearly here"; a ship
+ * visibly closing on the island does. The track runs from open water to the
+ * coast, one step per barbarian roll.
+ */
+function BarbarianTrack({
+  bounds,
+  position,
+  attacksAt,
+}: {
+  bounds: { minX: number; minY: number; width: number; height: number };
+  position: number;
+  attacksAt: number;
+}) {
+  const steps = Math.max(1, attacksAt);
+  const clamped = Math.min(Math.max(position, 0), steps);
+  const y = bounds.minY + HEX_SIZE * 0.55;
+  const x0 = bounds.minX + bounds.width * 0.16;
+  const x1 = bounds.minX + bounds.width * 0.84;
+  const at = (i: number) => x0 + ((x1 - x0) * i) / steps;
+  const imminent = clamped >= steps - 1;
+
+  return (
+    <g pointerEvents="none">
+      <line
+        x1={x0}
+        y1={y}
+        x2={x1}
+        y2={y}
+        stroke={surface('ink-soft')}
+        strokeWidth={HEX_SIZE * 0.035}
+        strokeDasharray={`${HEX_SIZE * 0.1} ${HEX_SIZE * 0.1}`}
+      />
+      {Array.from({ length: steps + 1 }, (_, i) => (
+        <circle
+          key={i}
+          cx={at(i)}
+          cy={y}
+          r={HEX_SIZE * (i === steps ? 0.11 : 0.07)}
+          fill={
+            i === steps
+              ? surface('token-hot')
+              : i <= clamped
+                ? surface('ink-soft')
+                : surface('token-bg')
+          }
+          stroke={surface('ink-soft')}
+          strokeWidth={HEX_SIZE * 0.018}
+        />
+      ))}
+
+      <text
+        x={x0}
+        y={y - HEX_SIZE * 0.26}
+        textAnchor="start"
+        fontSize={HEX_SIZE * 0.2}
+        fontWeight={600}
+        fill={surface('ink-soft')}
+      >
+        Barbarians
+      </text>
+      <text
+        x={x1}
+        y={y - HEX_SIZE * 0.26}
+        textAnchor="end"
+        fontSize={HEX_SIZE * 0.2}
+        fontWeight={700}
+        fill={imminent ? surface('token-hot') : surface('ink-soft')}
+      >
+        {clamped >= steps
+          ? 'Attacking!'
+          : `attack in ${steps - clamped} roll${steps - clamped === 1 ? '' : 's'}`}
+      </text>
+
+      {/* The ship itself, sitting on the current step. */}
+      <g transform={`translate(${at(clamped)} ${y})`}>
+        <path
+          d={`M${-HEX_SIZE * 0.24} ${-HEX_SIZE * 0.04} L${HEX_SIZE * 0.24} ${
+            -HEX_SIZE * 0.04
+          } L${HEX_SIZE * 0.16} ${HEX_SIZE * 0.13} Q0 ${HEX_SIZE * 0.19} ${
+            -HEX_SIZE * 0.16
+          } ${HEX_SIZE * 0.13} Z`}
+          fill={imminent ? surface('token-hot') : surface('robber')}
+          stroke={surface('robber-rim')}
+          strokeWidth={HEX_SIZE * 0.02}
+        />
+        <path
+          d={`M0 ${-HEX_SIZE * 0.06} L0 ${-HEX_SIZE * 0.3} L${HEX_SIZE * 0.17} ${
+            -HEX_SIZE * 0.16
+          } Z`}
+          fill={imminent ? surface('token-hot') : surface('robber')}
+          stroke={surface('robber-rim')}
+          strokeWidth={HEX_SIZE * 0.02}
+        />
+      </g>
+    </g>
   );
 }
 

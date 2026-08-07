@@ -65,24 +65,78 @@ const isTapTarget = (t: EventTarget | null): boolean =>
 
 export function useBoardGestures(
   fit: ViewTransform,
-  { minZoom = 0.6, maxZoom = 3 }: BoardGestureOptions = {},
+  // The fitted view already shows the whole board, so zooming out past it only
+  // shrinks the pieces and strands the board in a sea of background. 1 is the
+  // floor; a little slack above it would just invite the same problem.
+  { minZoom = 1, maxZoom = 2.8 }: BoardGestureOptions = {},
 ): BoardGestures {
   const ref = useRef<SVGSVGElement | null>(null);
   const [transform, setTransform] = useState<ViewTransform>(fit);
 
   const tRef = useRef(transform);
   const fitRef = useRef(fit);
-  const apply = useCallback((t: ViewTransform) => {
-    tRef.current = t;
-    setTransform(t);
+  const frame = useRef<number | null>(null);
+
+  /**
+   * Keep the board anchored.
+   *
+   * At the fitted scale it is centred and cannot move. Zoomed in, panning is
+   * bounded by how much of the board is actually off-screen, so it can never be
+   * flung into empty space and lost — which is most of what "erratic" means on
+   * a phone, where a pinch always drags a little too.
+   */
+  const constrain = useCallback((t: ViewTransform): ViewTransform => {
+    const f = fitRef.current;
+    const el = ref.current;
+    const r = el?.getBoundingClientRect();
+    if (!r || f.k <= 0) return t;
+
+    const scale = t.k / f.k;
+    // Slack is the extra board size the zoom created, in screen pixels.
+    const slackX = Math.max(0, (r.width * scale - r.width) / 2);
+    const slackY = Math.max(0, (r.height * scale - r.height) / 2);
+    const centreX = f.x * scale + (r.width * (1 - scale)) / 2;
+    const centreY = f.y * scale + (r.height * (1 - scale)) / 2;
+
+    return {
+      k: t.k,
+      x: clamp(t.x, centreX - slackX, centreX + slackX),
+      y: clamp(t.y, centreY - slackY, centreY + slackY),
+    };
   }, []);
+
+  /**
+   * Commit at most one transform per animation frame. Pointer events arrive
+   * far faster than the screen refreshes, and re-rendering the whole board on
+   * every one of them is what makes a pinch feel like it is stuttering.
+   */
+  const apply = useCallback(
+    (t: ViewTransform) => {
+      const next = constrain(t);
+      tRef.current = next;
+      if (frame.current !== null) return;
+      frame.current = requestAnimationFrame(() => {
+        frame.current = null;
+        setTransform(tRef.current);
+      });
+    },
+    [constrain],
+  );
+
+  useEffect(
+    () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
 
   // Re-fit whenever the layout changes: rotating the iPad should show the whole
   // board again rather than a stale corner of it.
   useEffect(() => {
     fitRef.current = fit;
-    apply(fit);
-  }, [fit, apply]);
+    tRef.current = fit;
+    setTransform(fit);
+  }, [fit]);
 
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const pan = useRef<{ id: number; x: number; y: number; t: ViewTransform } | null>(null);
@@ -94,7 +148,10 @@ export function useBoardGestures(
   const lastTap = useRef<{ x: number; y: number; at: number } | null>(null);
   const [active, setActive] = useState(false);
 
-  const reset = useCallback(() => apply(fitRef.current), [apply]);
+  const reset = useCallback(() => {
+    tRef.current = fitRef.current;
+    setTransform(fitRef.current);
+  }, []);
 
   const zoomBy = useCallback(
     (factor: number) => {

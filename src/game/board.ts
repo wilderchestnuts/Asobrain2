@@ -483,6 +483,7 @@ export function assembleBoard(
 ): Board {
   const hexes = withSea(specs, options.seaMargin ?? 1);
   assignNumbers(hexes, rng);
+  demoteGoldNumbers(hexes);
   assignIslands(hexes);
 
   const portCount = options.ports ?? 0;
@@ -571,14 +572,75 @@ function layoutTerrain(
   return coords.map((c, i) => ({ q: c.q, r: c.r, terrain: draw[i] }));
 }
 
+/**
+ * How much gold a board of this size can carry.
+ *
+ * Gold pays any resource, so a gold hex is strictly better than any ordinary
+ * one on the same number — and on a 19-hex board two of them warp the whole
+ * game. Roughly one per twelve land hexes keeps it a treat rather than the
+ * only spot worth taking; a classic board therefore gets at most one.
+ */
+export const goldBudget = (landCount: number): number =>
+  Math.max(0, Math.floor(landCount / 12));
+
 /** Swap `count` producing hexes for gold. Gold always gets a token. */
 function sprinkleGold(specs: HexSpec[], count: number, rng: Rng): void {
-  if (count <= 0) return;
+  const land = specs.filter((s) => isLandTerrain(s.terrain)).length;
+  const allowed = Math.min(count, goldBudget(land));
+  if (allowed <= 0) return;
   const eligible = specs
     .map((s, i) => ({ s, i }))
     .filter(({ s }) => s.terrain !== 'desert' && isLandTerrain(s.terrain));
-  for (const { i } of rng.shuffle(eligible).slice(0, count)) {
+  for (const { i } of rng.shuffle(eligible).slice(0, allowed)) {
     specs[i].terrain = 'gold';
+  }
+}
+
+/**
+ * Give the gold hexes the least likely numbers on the board.
+ *
+ * Balancing gold by rarity rather than banning it outright: a 12 on gold is a
+ * pleasant surprise, an 8 on gold decides the game on its own.
+ *
+ * A swap moves the gold hex's strong number onto an ordinary hex, which can
+ * land it beside another 6 or 8 or overload a vertex — so each swap is checked
+ * against the same constraints the dealer used, and abandoned if it breaks one.
+ * A gold hex keeping a decent number is a far smaller problem than a board with
+ * two 8s touching.
+ */
+function demoteGoldNumbers(hexes: Hex[]): void {
+  const gold = hexes.filter((h) => h.terrain === 'gold' && h.number !== undefined);
+  if (gold.length === 0) return;
+
+  const others = hexes.filter(
+    (h) => h.terrain !== 'gold' && h.number !== undefined && h.terrain !== 'desert',
+  );
+
+  const stage: BalanceStage = { hotNumbers: true, vertexPips: true, tries: 1 };
+
+  for (const g of gold) {
+    // Try partners from the weakest number upwards and take the first swap the
+    // balance rules accept. Settling for the single weakest hex leaves gold on
+    // a 6 whenever that one swap happens to be illegal.
+    const candidates = others
+      .filter((o) => pipsFor(o.number!) < pipsFor(g.number!))
+      .sort((a, b) => pipsFor(a.number!) - pipsFor(b.number!));
+
+    for (const partner of candidates) {
+      const goldNumber = g.number;
+      g.number = partner.number;
+      partner.number = goldNumber;
+
+      const map = mapOf(hexes);
+      if (
+        tokenFits(map, g, g.number!, stage) &&
+        tokenFits(map, partner, partner.number!, stage)
+      ) {
+        break;
+      }
+      partner.number = g.number;
+      g.number = goldNumber;
+    }
   }
 }
 

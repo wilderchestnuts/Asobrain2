@@ -32,7 +32,7 @@ export const TERRAIN_COLORS: Record<Terrain, ColorPair> = {
   mountains: { light: '#8A90A2', dark: '#565C6E' },
   desert: { light: '#E3D3A4', dark: '#9C8D64' },
   sea: { light: '#2E80C4', dark: '#123E63' },
-  gold: { light: '#F0AE18', dark: '#B98207' },
+  gold: { light: '#B8742B', dark: '#7A4A16' },
   fog: { light: '#A8B4C0', dark: '#495363' },
 };
 
