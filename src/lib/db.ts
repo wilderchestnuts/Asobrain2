@@ -455,6 +455,25 @@ export async function appendActions(
 }
 
 /** Attach a caller to an empty or bot seat. */
+/**
+ * Remove a game outright.
+ *
+ * Abandoned games pile up fast while testing, and a list you cannot prune stops
+ * being useful. Child rows go with it via the foreign keys' cascade.
+ */
+export async function deleteGame(id: string): Promise<void> {
+  const db = getServiceSupabase();
+  if (!db) {
+    await withLocalLock((data) => {
+      delete data.games[id];
+      data.actions = data.actions.filter((a) => a.gameId !== id);
+    });
+    return;
+  }
+  const { error } = await db.from('games').delete().eq('id', id);
+  if (error) throw new Error(`delete game: ${describeDbError(error)}`);
+}
+
 export async function claimSeat(args: {
   gameId: string;
   seat: number;

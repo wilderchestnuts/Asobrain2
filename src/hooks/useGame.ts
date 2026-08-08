@@ -246,6 +246,14 @@ export async function listMyGames(): Promise<GameListItem[]> {
   return payload.games ?? [];
 }
 
+export async function deleteGame(id: string): Promise<void> {
+  const res = await fetch(`/api/games/${id}`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+  });
+  await readJson<{ ok: boolean }>(res, 'Could not delete the game');
+}
+
 export interface Me {
   kind: 'user' | 'guest';
   id: string;

@@ -52,6 +52,24 @@ type BuildMode =
   | 'wall'
   | null;
 
+/**
+ * A left rail buys vertical space on a wide screen, where the board is
+ * limited by height. On a narrow phone held upright the opposite is true —
+ * there the same rail steals nearly half the width — so it becomes a strip
+ * across the top instead.
+ */
+function useWideLayout(): boolean {
+  const [wide, setWide] = useState(true);
+  useEffect(() => {
+    const q = window.matchMedia('(min-width: 700px)');
+    const sync = () => setWide(q.matches);
+    sync();
+    q.addEventListener('change', sync);
+    return () => q.removeEventListener('change', sync);
+  }, []);
+  return wide;
+}
+
 export function GameScreen({ game }: { game: UseGame }) {
   const { state, me, myPlayerId, isMyTurn, send, actionError, clearActionError } =
     game;
@@ -61,6 +79,7 @@ export function GameScreen({ game }: { game: UseGame }) {
   const [sheet, setSheet] = useState<'trade' | 'cards' | 'log' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [discard, setDiscard] = useState<Partial<Record<Tradeable, number>>>({});
+  const wide = useWideLayout();
 
   const legal = useMemo(
     () => (state && myPlayerId ? allLegalActions(state, myPlayerId) : []),
@@ -150,12 +169,6 @@ export function GameScreen({ game }: { game: UseGame }) {
         overflow: 'hidden',
       }}
     >
-      <PlayerStrip
-        state={state}
-        myPlayerId={myPlayerId}
-        onOpenMenu={() => setMenuOpen(true)}
-      />
-
       <GameMenu
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -163,7 +176,21 @@ export function GameScreen({ game }: { game: UseGame }) {
         onResign={() => void act({ type: 'resign' })}
       />
 
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: wide ? 'row' : 'column',
+        }}
+      >
+        <PlayerRail
+          state={state}
+          myPlayerId={myPlayerId}
+          onOpenMenu={() => setMenuOpen(true)}
+          wide={wide}
+        />
+        <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
         <Board
           board={state.board}
           players={state.players}
@@ -187,6 +214,7 @@ export function GameScreen({ game }: { game: UseGame }) {
               : undefined
           }
         />
+        </div>
       </div>
 
       {/*
@@ -335,14 +363,16 @@ export function GameScreen({ game }: { game: UseGame }) {
 // Top strip
 // ---------------------------------------------------------------------------
 
-function PlayerStrip({
+function PlayerRail({
   state,
   myPlayerId,
   onOpenMenu,
+  wide,
 }: {
   state: GameState;
   myPlayerId: string | null;
   onOpenMenu: () => void;
+  wide: boolean;
 }) {
   const styles = playerStyles(state.players);
   const ck = state.options.expansions.citiesAndKnights;
@@ -352,16 +382,30 @@ function PlayerStrip({
       style={{
         ...panel,
         display: 'flex',
-        gap: 8,
-        alignItems: 'stretch',
-        // Without this the strip shrinks and its content spills out of view;
-        // only the board is allowed to give up space.
+        flexDirection: wide ? 'column' : 'row',
+        alignItems: wide ? 'stretch' : 'center',
+        gap: 6,
         flexShrink: 0,
-        padding: `max(6px, env(safe-area-inset-top)) 10px 6px`,
-        borderBottom: `1px solid ${surface('chrome-edge')}`,
-        overflowX: 'auto',
+        width: wide ? 176 : undefined,
+        padding: `max(6px, env(safe-area-inset-top)) 8px 6px`,
+        borderRight: wide ? `1px solid ${surface('chrome-edge')}` : undefined,
+        borderBottom: wide ? undefined : `1px solid ${surface('chrome-edge')}`,
+        overflowY: wide ? 'auto' : undefined,
+        overflowX: wide ? undefined : 'auto',
       }}
     >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          order: wide ? 0 : 1,
+          marginLeft: wide ? undefined : 'auto',
+        }}
+      >
+        <Button tone="ghost" onClick={onOpenMenu}>
+          ☰
+        </Button>
+      </div>
       {state.players.map((p) => {
         const isTurn = state.players[state.currentPlayer]?.id === p.id;
         const mine = p.id === myPlayerId;
@@ -372,9 +416,8 @@ function PlayerStrip({
               display: 'flex',
               flexDirection: 'column',
               gap: 2,
-              padding: '4px 10px',
+              padding: '5px 8px',
               borderRadius: 10,
-              minWidth: 132,
               border: `2px solid ${isTurn ? styles[p.id]?.base : 'transparent'}`,
               background: isTurn ? 'rgba(127,127,127,.12)' : 'transparent',
             }}
@@ -411,7 +454,7 @@ function PlayerStrip({
               {state.longestRoad?.owner === p.id && <span>🛣 longest</span>}
               {state.largestArmy?.owner === p.id && <span>⚔ army</span>}
             </div>
-            {ck && p.improvements && (
+            {wide && ck && p.improvements && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {(['trade', 'politics', 'science'] as ImprovementTrack[]).map(
                   (t) => (
@@ -429,18 +472,7 @@ function PlayerStrip({
         );
       })}
 
-      <div
-        style={{
-          marginLeft: 'auto',
-          display: 'flex',
-          alignItems: 'center',
-          paddingLeft: 6,
-        }}
-      >
-        <Button tone="ghost" onClick={onOpenMenu}>
-          ☰
-        </Button>
-      </div>
+
     </div>
   );
 }

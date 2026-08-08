@@ -8,11 +8,12 @@
  * button comes pre-filled with a sensible setup and everything else is optional.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button, TAP, panel } from '@/components/game/parts';
 import {
   createGame,
+  deleteGame,
   fetchMe,
   listMyGames,
   type GameListItem,
@@ -33,6 +34,8 @@ export default function LobbyPage() {
   const [scenario, setScenario] = useState('fog-islands');
   const [bots, setBots] = useState(1);
   const [vp, setVp] = useState<number | null>(null);
+  /** Solo games skip the second human seat and start immediately. */
+  const [solo, setSolo] = useState(false);
 
   const refresh = useCallback(async () => {
     setMe(await fetchMe());
@@ -44,6 +47,8 @@ export default function LobbyPage() {
   }, [refresh]);
 
   const target = vp ?? defaultVictoryPoints({ seafarers, citiesAndKnights });
+  // A solo game needs at least one opponent, since two seats is the minimum.
+  const soloBots = solo ? Math.max(1, bots) : bots;
 
   const start = async () => {
     setBusy(true);
@@ -58,9 +63,11 @@ export default function LobbyPage() {
           seed: Math.random().toString(36).slice(2, 10),
         },
         seats: [
-          { kind: 'me' },
-          { kind: 'human', name: 'Player 2' },
-          ...Array.from({ length: bots }, (_, i) => ({
+          { kind: 'me' as const },
+          // A solo game has no seat to wait for, so it starts straight away —
+          // which is what makes it useful for trying things out.
+          ...(solo ? [] : [{ kind: 'human' as const, name: 'Player 2' }]),
+          ...Array.from({ length: soloBots }, (_, i) => ({
             kind: 'bot' as const,
             name: `Bot ${i + 1}`,
           })),
@@ -110,6 +117,21 @@ export default function LobbyPage() {
             New game
           </h2>
 
+          <Row label="Players">
+            <Button
+              tone={solo ? 'default' : 'primary'}
+              onClick={() => setSolo(false)}
+            >
+              Two of us
+            </Button>
+            <Button
+              tone={solo ? 'primary' : 'default'}
+              onClick={() => setSolo(true)}
+            >
+              Just me vs bots
+            </Button>
+          </Row>
+
           <Row label="Expansions">
             <Toggle on={seafarers} onChange={setSeafarers} label="Seafarers" />
             <Toggle
@@ -139,10 +161,10 @@ export default function LobbyPage() {
           )}
 
           <Row label="Computer players">
-            {[0, 1, 2, 3].map((n) => (
+            {(solo ? [1, 2, 3] : [0, 1, 2, 3]).map((n) => (
               <Button
                 key={n}
-                tone={bots === n ? 'primary' : 'default'}
+                tone={soloBots === n ? 'primary' : 'default'}
                 onClick={() => setBots(n)}
               >
                 {n}
@@ -199,8 +221,9 @@ export default function LobbyPage() {
             {busy ? 'Starting…' : 'Start game'}
           </Button>
           <p style={{ fontSize: 13, opacity: 0.7, marginTop: 10 }}>
-            You get a link to send to your second player. They tap it and take a
-            seat — no setup on their end.
+            {solo
+              ? 'Starts straight away — no one to wait for.'
+              : 'You get a link to send to your second player. They tap it and take a seat — no setup on their end.'}
           </p>
         </section>
 
@@ -213,40 +236,196 @@ export default function LobbyPage() {
           ) : (
             <ul style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {games.map((g) => (
-                <li key={g.id}>
-                  <a
-                    href={`/play/${g.id}`}
-                    style={{
-                      ...panel,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 12,
-                      minHeight: TAP + 14,
-                      padding: '10px 16px',
-                      border: `1px solid ${surface('chrome-edge')}`,
-                      borderRadius: 12,
-                    }}
-                  >
-                    <span style={{ fontWeight: 600 }}>
-                      {g.seats.map((s) => s.name).join(', ')}
-                    </span>
-                    <span
-                      style={{ marginLeft: 'auto', opacity: 0.75, fontSize: 14 }}
-                    >
-                      {g.status === 'finished'
-                        ? 'finished'
-                        : g.currentPlayerName
-                          ? `${g.currentPlayerName} to move`
-                          : g.status}
-                    </span>
-                  </a>
-                </li>
+                <GameRow
+                  key={g.id}
+                  game={g}
+                  onDelete={async () => {
+                    await deleteGame(g.id);
+                    setGames((prev) => prev.filter((x) => x.id !== g.id));
+                  }}
+                />
               ))}
             </ul>
           )}
         </section>
       </div>
     </main>
+  );
+}
+
+/**
+ * One game in the list, with swipe-to-delete.
+ *
+ * Dragging left reveals the delete action, which then asks before doing
+ * anything — a swipe is easy to trigger by accident while scrolling, and a
+ * deleted game is not coming back. A plain button is always there too, since
+ * swiping is invisible until you already know about it.
+ */
+function GameRow({
+  game,
+  onDelete,
+}: {
+  game: GameListItem;
+  onDelete: () => Promise<void>;
+}) {
+  const [offset, setOffset] = useState(0);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const drag = useRef<{ x: number; from: number } | null>(null);
+
+  const REVEAL = 96;
+
+  const label =
+    game.status === 'finished'
+      ? 'finished'
+      : game.currentPlayerName
+        ? `${game.currentPlayerName} to move`
+        : game.status;
+
+  return (
+    <li>
+      {/*
+        Only the swipe area clips. Putting overflow:hidden on the whole row
+        also clipped the confirmation panel below it, leaving a prompt that
+        could be seen but not tapped.
+      */}
+      <div style={{ position: 'relative', overflow: 'hidden', borderRadius: 12 }}>
+      {/* The action sitting behind the row, revealed by the swipe. */}
+      <div
+        style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          paddingRight: 12,
+          background: '#B4232A',
+          borderRadius: 12,
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          style={{
+            minHeight: TAP,
+            padding: '0 16px',
+            color: '#fff',
+            fontWeight: 600,
+            fontSize: 15,
+          }}
+        >
+          Delete
+        </button>
+      </div>
+
+      <div
+        onPointerDown={(e) => {
+          drag.current = { x: e.clientX, from: offset };
+        }}
+        onPointerMove={(e) => {
+          const d = drag.current;
+          if (!d) return;
+          const next = Math.min(0, Math.max(-REVEAL, d.from + (e.clientX - d.x)));
+          setOffset(next);
+        }}
+        onPointerUp={() => {
+          drag.current = null;
+          // Snap to whichever end is nearer, so the row is never left ajar.
+          setOffset((o) => (o < -REVEAL / 2 ? -REVEAL : 0));
+        }}
+        onPointerCancel={() => {
+          drag.current = null;
+          setOffset(0);
+        }}
+        style={{
+          ...panel,
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          minHeight: TAP + 14,
+          padding: '10px 16px',
+          border: `1px solid ${surface('chrome-edge')}`,
+          borderRadius: 12,
+          transform: `translateX(${offset}px)`,
+          transition: drag.current ? 'none' : 'transform .18s ease',
+          touchAction: 'pan-y',
+          // Must sit above the delete panel revealed behind it, or the row's
+          // own controls become unclickable.
+          zIndex: 1,
+        }}
+      >
+        <a
+          href={`/play/${game.id}`}
+          // A swipe must not also open the game.
+          onClick={(e) => {
+            if (offset !== 0) e.preventDefault();
+          }}
+          style={{ flex: 1, minWidth: 0, color: 'inherit' }}
+        >
+          <span style={{ fontWeight: 600 }}>
+            {game.seats.map((s) => s.name).join(', ')}
+          </span>
+        </a>
+        <span style={{ opacity: 0.75, fontSize: 14 }}>{label}</span>
+        <button
+          type="button"
+          aria-label="Delete this game"
+          onClick={() => setConfirming(true)}
+          style={{
+            minHeight: TAP,
+            minWidth: TAP,
+            fontSize: 18,
+            opacity: 0.55,
+          }}
+        >
+          ×
+        </button>
+      </div>
+      </div>
+
+      {confirming && (
+        <div
+          style={{
+            ...panel,
+            marginTop: 8,
+            padding: 12,
+            border: `1px solid #B4232A`,
+            borderRadius: 12,
+          }}
+        >
+          <p style={{ marginBottom: 10, fontSize: 15 }}>
+            Delete this game for good?
+          </p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              tone="danger"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await onDelete();
+                } finally {
+                  setBusy(false);
+                  setConfirming(false);
+                  setOffset(0);
+                }
+              }}
+            >
+              {busy ? 'Deleting…' : 'Delete'}
+            </Button>
+            <Button
+              onClick={() => {
+                setConfirming(false);
+                setOffset(0);
+              }}
+            >
+              Keep it
+            </Button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 

@@ -116,7 +116,9 @@ export function Card({
   selected?: boolean;
   small?: boolean;
 }) {
-  const w = small ? 40 : 54;
+  // Sized up: these are the numbers you read most often in a turn, and the old
+  // small variant was hard to scan at a glance.
+  const w = small ? 54 : 64;
   return (
     <button
       type="button"
@@ -125,7 +127,7 @@ export function Card({
       aria-label={`${count} ${CARD_LABEL[kind]}`}
       style={{
         width: w,
-        minHeight: small ? 40 : TAP + 10,
+        minHeight: small ? TAP + 8 : TAP + 18,
         borderRadius: 10,
         border: `2px solid ${selected ? surface('confirm') : surface('chrome-edge')}`,
         background: CARD_COLOR[kind],
@@ -134,13 +136,13 @@ export function Card({
         placeItems: 'center',
         gap: 0,
         fontWeight: 700,
-        fontSize: small ? 14 : 17,
+        fontSize: small ? 19 : 22,
         textShadow: '0 1px 2px rgba(0,0,0,.45)',
         touchAction: 'manipulation',
         opacity: count === 0 ? 0.35 : 1,
       }}
     >
-      <span style={{ fontSize: small ? 11 : 13, lineHeight: 1 }}>
+      <span style={{ fontSize: small ? 13 : 15, lineHeight: 1 }}>
         {CARD_GLYPH[kind]}
       </span>
       <span style={{ lineHeight: 1 }}>{count}</span>

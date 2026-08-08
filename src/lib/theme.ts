@@ -68,6 +68,9 @@ export const SURFACE_COLORS = {
   robber: { light: '#1D1A17', dark: '#0B0A09' },
   'robber-rim': { light: '#F5F1E8', dark: '#B9B3A6' },
   highlight: { light: '#0E9A9A', dark: '#2AD3D3' },
+  // A warm ring reads as "your move" without animating; it also sits clear of
+  // every terrain colour and of the player palette.
+  'highlight-ring': { light: '#F2B01E', dark: '#FFC94A' },
   confirm: { light: '#12874F', dark: '#25C071' },
   'ghost-ink': { light: '#0F172A', dark: '#F8FAFC' },
 

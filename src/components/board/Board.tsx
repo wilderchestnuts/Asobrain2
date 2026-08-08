@@ -150,9 +150,96 @@ export function Board({
   const gestures = useBoardGestures(fit);
   const { transform, consumedByGesture } = gestures;
 
-  // The hit circle is specified in CSS pixels, so it has to be converted back
-  // into world units — otherwise zooming out shrinks the target below a finger.
+  /**
+   * Taps are resolved to the *nearest* legal spot rather than by hit-testing
+   * overlapping circles.
+   *
+   * A finger-sized target is about 55 board units across when zoomed out, but
+   * neighbouring road spots are only 52 apart — so the circles overlapped and
+   * whichever happened to be painted last swallowed the tap. That made roads
+   * effectively unplaceable on a phone: each tap selected a different edge, so
+   * the confirming tap never matched the first. Shrinking the circles instead
+   * would have made them too small to hit at all.
+   */
   const hitRadius = MIN_TAP_PX / 2 / Math.max(transform.k, 0.001);
+  /** How far from a spot a tap still counts, in board units. */
+  const grabRadius = Math.max(hitRadius, HEX_SIZE * 0.5);
+
+  const pickNearest = useCallback(
+    (e: ReactPointerEvent): NonNullable<Pending> | null => {
+      const el = gestures.ref.current;
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      const wx = (e.clientX - r.left - transform.x) / transform.k;
+      const wy = (e.clientY - r.top - transform.y) / transform.k;
+
+      let best: NonNullable<Pending> | null = null;
+      let bestD = Infinity;
+      const consider = (
+        px: number,
+        py: number,
+        candidate: NonNullable<Pending>,
+      ) => {
+        const d = Math.hypot(px - wx, py - wy);
+        if (d < bestD) {
+          bestD = d;
+          best = candidate;
+        }
+      };
+
+      for (const v of highlightVertices) {
+        const p = vertexToPixel(v, HEX_SIZE);
+        consider(p.x, p.y, { kind: 'vertex', id: v });
+      }
+      for (const edge of highlightEdges) {
+        const p = edgeToPixel(edge, HEX_SIZE);
+        consider(p.x, p.y, { kind: 'edge', id: edge });
+      }
+      for (const coord of highlightHexes) {
+        const p = hexToPixel(coord, HEX_SIZE);
+        consider(p.x, p.y, { kind: 'hex', id: hexKey(coord), coord });
+      }
+
+      return bestD <= grabRadius ? best : null;
+    },
+    [
+      gestures.ref,
+      transform,
+      highlightVertices,
+      highlightEdges,
+      highlightHexes,
+      grabRadius,
+    ],
+  );
+
+  const onSurfaceTap = useCallback(
+    (e: ReactPointerEvent) => {
+      if (consumedByGesture()) return;
+      const next = pickNearest(e);
+      if (!next) {
+        setPending(null); // tapping open water cancels
+        return;
+      }
+      const same = pending && pending.kind === next.kind && pending.id === next.id;
+      if (!same) {
+        setPending(next);
+        return;
+      }
+      setPending(null);
+      if (next.kind === 'vertex') onVertexTap?.(next.id);
+      else if (next.kind === 'edge') onEdgeTap?.(next.id);
+      else onHexTap?.(next.coord);
+    },
+    [
+      consumedByGesture,
+      pickNearest,
+      pending,
+      setPending,
+      onVertexTap,
+      onEdgeTap,
+      onHexTap,
+    ],
+  );
 
   // A selection that is no longer legal must not linger.
   useEffect(() => {
@@ -164,27 +251,6 @@ export function Board({
         highlightHexes.some((h) => hexKey(h) === pending.id));
     if (!stillLegal) setPending(null);
   }, [pending, highlightVertices, highlightEdges, highlightHexes]);
-
-  const tapHandler = useCallback(
-    (next: NonNullable<Pending>, commit: () => void) =>
-      (e: ReactPointerEvent) => {
-        // A tap that was really the end of a pan or pinch must not build.
-        if (consumedByGesture()) return;
-        e.stopPropagation();
-
-        const same =
-          pending &&
-          pending.kind === next.kind &&
-          pending.id === next.id;
-        if (same) {
-          setPending(null);
-          commit();
-        } else {
-          setPending(next);
-        }
-      },
-    [pending, consumedByGesture],
-  );
 
   const styles = useMemo(() => playerStyles(players), [players]);
   const styleFor = (owner: string) => styles[owner] ?? playerStyles([{ id: owner }])[owner];
@@ -220,13 +286,7 @@ export function Board({
         width="100%"
         height="100%"
         onPointerDown={gestures.onPointerDown}
-        onPointerUp={(e) => {
-          // A tap on empty water clears a pending selection, which is the
-          // cancel gesture people reach for without being told.
-          if (!consumedByGesture() && e.target === e.currentTarget) {
-            setPending(null);
-          }
-        }}
+        onPointerUp={onSurfaceTap}
         style={{ display: 'block', touchAction: 'none' }}
       >
         <g
@@ -371,12 +431,8 @@ export function Board({
                 y={p.y}
                 size={HEX_SIZE}
                 angle={edgeAngle(edge, HEX_SIZE)}
-                hitRadius={hitRadius}
                 pending={pending?.kind === 'edge' && pending.id === edge}
                 label={`Build ${edgeGhost}`}
-                onTap={tapHandler({ kind: 'edge', id: edge }, () =>
-                  onEdgeTap?.(edge),
-                )}
               />
             );
           })}
@@ -389,12 +445,8 @@ export function Board({
                 x={p.x}
                 y={p.y}
                 size={HEX_SIZE}
-                hitRadius={hitRadius}
                 pending={pending?.kind === 'vertex' && pending.id === vertex}
                 label={`Build ${vertexGhost}`}
-                onTap={tapHandler({ kind: 'vertex', id: vertex }, () =>
-                  onVertexTap?.(vertex),
-                )}
               />
             );
           })}
@@ -408,12 +460,8 @@ export function Board({
                 x={p.x}
                 y={p.y}
                 size={HEX_SIZE}
-                hitRadius={HEX_SIZE * 0.75}
                 pending={pending?.kind === 'hex' && pending.id === key}
                 label="Move the robber here"
-                onTap={tapHandler({ kind: 'hex', id: key, coord }, () =>
-                  onHexTap?.(coord),
-                )}
               />
             );
           })}

@@ -1,86 +1,41 @@
 'use client';
 
-import type { PointerEvent as ReactPointerEvent } from 'react';
-
 import { surface } from '@/lib/theme';
 
 /**
- * A legal build spot on a vertex.
+ * A legal build spot on a vertex — purely a marker.
  *
- * The drawn marker is small enough not to clutter the board; the thing that
- * actually receives the tap is the invisible circle on top, which is at least
- * 44 CSS pixels across (`hitRadius` is computed by <Board> from the live zoom).
- * Never make the player hit the art.
- *
- * Vertex spots are painted after edge spots so that where the two overlap —
- * an edge midpoint is only half a hex-side from its endpoints — the vertex
- * wins. Tap-to-confirm makes the ambiguity recoverable either way.
+ * Taps are not handled here. <Board> resolves a tap to the nearest legal spot
+ * instead, because at low zoom a finger-sized hit area is wider than the gap
+ * between neighbouring spots, and overlapping circles meant the wrong one won.
  */
 
 export interface SpotProps {
   x: number;
   y: number;
   size: number;
-  /** Radius of the invisible hit circle, in board-world units. */
-  hitRadius: number;
   pending?: boolean;
   label: string;
-  onTap: (e: ReactPointerEvent) => void;
 }
 
-export function VertexSpot({
-  x,
-  y,
-  size,
-  hitRadius,
-  pending,
-  label,
-  onTap,
-}: SpotProps) {
+export function VertexSpot({ x, y, size, pending, label }: SpotProps) {
   return (
-    <g transform={`translate(${x} ${y})`}>
-      {!pending && (
-        <>
-          <circle
-            className="asb-pulse"
-            r={size * 0.24}
-            fill={surface('highlight')}
-            opacity={0.32}
-          />
-          <circle
-            r={size * 0.13}
-            fill={surface('highlight')}
-            stroke={surface('token-bg')}
-            strokeWidth={size * 0.03}
-          />
-        </>
-      )}
-      {pending && <ConfirmBadge size={size} dy={-size * BADGE_DY} />}
-      <circle
-        data-tap-target="vertex"
-        role="button"
-        aria-label={label}
-        r={hitRadius}
-        fill="transparent"
-        onPointerUp={onTap}
-      />
+    <g transform={`translate(${x} ${y})`} pointerEvents="none" aria-label={label}>
       {/*
-        The badge floats above the spot, and it is the thing a player actually
-        aims at once it appears — so it needs its own hit area. Without this the
-        confirm tap lands on nothing, which is exactly how a placement gets
-        stuck on a phone.
+        A still amber ring, not a pulsing disc. The animation drew the eye to
+        the motion rather than to the spot, and with dozens of legal places at
+        once the whole board shimmered.
       */}
-      {pending && (
+      {!pending && (
         <circle
-          data-tap-target="vertex"
-          role="button"
-          aria-label={`Confirm: ${label}`}
-          cy={-size * BADGE_DY}
-          r={Math.max(hitRadius, size * 0.34)}
-          fill="transparent"
-          onPointerUp={onTap}
+          r={size * 0.17}
+          fill="none"
+          stroke={surface('highlight-ring')}
+          strokeWidth={size * 0.06}
+          opacity={0.95}
         />
       )}
+      {pending && <ConfirmBadge size={size} dy={-size * BADGE_DY} />}
     </g>
   );
 }

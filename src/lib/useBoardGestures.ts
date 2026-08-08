@@ -259,20 +259,9 @@ export function useBoardGestures(
         return;
       }
 
-      const c = tap.current;
-      if (c && !moved.current && !c.onTarget && e.timeStamp - c.at < 500) {
-        const prev = lastTap.current;
-        if (
-          prev &&
-          e.timeStamp - prev.at < DOUBLE_TAP_MS &&
-          Math.hypot(c.x - prev.x, c.y - prev.y) < DOUBLE_TAP_SLOP_PX
-        ) {
-          reset();
-          lastTap.current = null;
-        } else {
-          lastTap.current = { x: c.x, y: c.y, at: e.timeStamp };
-        }
-      }
+      // No double-tap-to-fit: placing is tap-then-tap-again on the same spot,
+      // which is the identical gesture. The Fit button does the job without
+      // ever fighting a placement.
       pan.current = null;
       pinch.current = null;
       tap.current = null;
