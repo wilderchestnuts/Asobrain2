@@ -416,11 +416,48 @@ export interface GameState {
   rngCursor: number;
 }
 
+/**
+ * One line of the game log.
+ *
+ * `message` is the human sentence; `kind` and `data` carry the same event in a
+ * form the UI can draw. Play-by-play needs the actual dice faces and the actual
+ * cards gained, and parsing them back out of English would be both fragile and
+ * silly.
+ */
 export interface LogEntry {
   turn: number;
   playerId?: PlayerId;
   message: string;
   at: number;
+  kind?: LogKind;
+  data?: LogData;
+}
+
+export type LogKind =
+  | 'roll'
+  | 'gain'
+  | 'barbarian'
+  | 'barbarian_attack'
+  | 'build'
+  | 'card'
+  | 'trade'
+  | 'robber';
+
+export interface LogData {
+  /** kind 'roll': the dice as thrown, so the UI can show the faces. */
+  dice?: { white: number; red: number; event?: EventDie };
+  /** kind 'gain': what this player actually received. */
+  gained?: Hand;
+  /** kind 'gain': free picks owed from gold hexes. */
+  goldPicks?: number;
+  /** kind 'barbarian': how far along, and how far they have to come. */
+  position?: number;
+  attacksAt?: number;
+  /** kind 'build': what was placed. */
+  piece?: 'settlement' | 'city' | 'road' | 'ship' | 'knight' | 'wall';
+  /** kind 'card': which deck, and the card if it is public. */
+  deck?: string;
+  card?: string;
 }
 
 // ---------------------------------------------------------------------------

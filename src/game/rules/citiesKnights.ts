@@ -196,7 +196,10 @@ function maybeDrawProgress(
     const card = decks[deck].shift();
     if (!card) continue;
     progressCardsOf(p).push(card);
-    logLine(draft, ctx, p.id, `drew a ${deck} progress card`);
+    logLine(draft, ctx, p.id, `drew a ${deck} progress card`, {
+      kind: 'card',
+      data: { deck },
+    });
 
     if (progressCardsOf(p).length > progressHandLimit(draft)) {
       draft.pending.push({
@@ -242,7 +245,9 @@ function barbarianAttack(draft: GameState, ctx: Ctx): void {
     for (const id of heroes) {
       draft.defenderOfCatan ??= {};
       draft.defenderOfCatan[id] = (draft.defenderOfCatan[id] ?? 0) + 1;
-      logLine(draft, ctx, id, 'defended Catan and earned a victory point');
+      logLine(draft, ctx, id, 'defended Catan and earned a victory point', {
+        kind: 'barbarian_attack',
+      });
     }
     if (heroes.length === 0) {
       logLine(draft, ctx, undefined, 'the barbarians found nothing worth taking');
@@ -262,7 +267,9 @@ function barbarianAttack(draft: GameState, ctx: Ctx): void {
     const exposed = draft.players.filter(
       (p) => !p.resigned && cityCount(draft, p.id) > 0 && canLose(p),
     );
-    logLine(draft, ctx, undefined, 'the barbarians overwhelmed Catan');
+  logLine(draft, ctx, undefined, 'the barbarians overwhelmed Catan', {
+      kind: 'barbarian_attack',
+    });
 
     if (exposed.length === 0) {
       logLine(draft, ctx, undefined, 'but there was nothing left to take');
@@ -939,6 +946,14 @@ export const citiesKnightsRules: RulesModule = {
     const face = EVENT_FACES[ctx.rng.int(6)];
     if (draft.lastRoll) draft.lastRoll.event = face;
 
+    // Re-log the roll now the event die is known, so the play-by-play can show
+    // all three dice together rather than the two and then a correction.
+    const rollEntry = [...draft.log].reverse().find((l) => l.kind === 'roll');
+    if (rollEntry?.data?.dice) {
+      rollEntry.data.dice.event = face;
+      rollEntry.message = `${rollEntry.message} · ${face}`;
+    }
+
     if (face === 'barbarian') {
       draft.barbarianPosition = (draft.barbarianPosition ?? 0) + 1;
       logLine(
@@ -946,6 +961,13 @@ export const citiesKnightsRules: RulesModule = {
         ctx,
         undefined,
         `the barbarians advance (${draft.barbarianPosition}/${BARBARIAN_ATTACK_AT})`,
+        {
+          kind: 'barbarian',
+          data: {
+            position: draft.barbarianPosition,
+            attacksAt: BARBARIAN_ATTACK_AT,
+          },
+        },
       );
       if (draft.barbarianPosition >= BARBARIAN_ATTACK_AT) {
         barbarianAttack(draft, ctx);

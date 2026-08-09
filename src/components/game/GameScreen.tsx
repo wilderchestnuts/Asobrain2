@@ -18,6 +18,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Board, type Pending } from '@/components/board/Board';
+import { PlaybackOverlay } from '@/components/game/Playback';
+import { useTurnPlayback } from '@/hooks/useTurnPlayback';
 import {
   Button,
   Card,
@@ -41,7 +43,8 @@ import type {
   Tradeable,
 } from '@/game/types';
 import { RESOURCES } from '@/game/types';
-import { playerStyles, surface } from '@/lib/theme';
+import { cardDetail, cardTitle, TRACK_TEXT } from '@/game/cardText';
+import { playerStyles, surface, TRACK_COLORS } from '@/lib/theme';
 
 type BuildMode =
   | 'settlement'
@@ -80,6 +83,9 @@ export function GameScreen({ game }: { game: UseGame }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [discard, setDiscard] = useState<Partial<Record<Tradeable, number>>>({});
   const wide = useWideLayout();
+  // Bot turns all resolve inside one request, so without this the board simply
+  // jumps several turns forward with no account of what happened.
+  const playback = useTurnPlayback(state?.log);
 
   const legal = useMemo(
     () => (state && myPlayerId ? allLegalActions(state, myPlayerId) : []),
@@ -336,6 +342,15 @@ export function GameScreen({ game }: { game: UseGame }) {
 
       {state.phase === 'game_over' && (
         <WinnerOverlay state={state} myPlayerId={myPlayerId} />
+      )}
+
+      {playback.current && (
+        <PlaybackOverlay
+          entry={playback.current}
+          players={state.players}
+          remaining={playback.remaining}
+          onSkip={playback.skip}
+        />
       )}
 
       {actionError && (
@@ -1025,8 +1040,10 @@ function CardsSheet({
       group('play_progress_card').slice(0, 30),
       (a) =>
         a.type === 'play_progress_card'
-          ? `${(me?.progressCards?.find((c) => c.id === a.cardId)?.kind ?? 'card').replace(/_/g, ' ')}${
-              a.choice && 'resource' in a.choice ? ` — ${a.choice.resource}` : ''
+          ? `${cardTitle(
+              me?.progressCards?.find((c) => c.id === a.cardId)?.kind ?? 'card',
+            )}${a.choice && 'resource' in a.choice ? ` — ${a.choice.resource}` : ''}${
+              a.choice && 'commodity' in a.choice ? ` — ${a.choice.commodity}` : ''
             }`
           : '',
     ],
@@ -1045,10 +1062,56 @@ function CardsSheet({
 
   return (
     <Sheet open={open} title="Cards & knights" onClose={onClose}>
+      {/* What is in hand, with what each card does — nobody remembers 24 of
+          them, and a bare name is no help at all. */}
+      {(me?.progressCards?.length ?? 0) > 0 && (
+        <section style={{ marginBottom: 16 }}>
+          <h3 style={{ fontWeight: 600, marginBottom: 8 }}>
+            Your progress cards
+          </h3>
+          <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {me!.progressCards!.map((c) => (
+              <li
+                key={c.id}
+                style={{
+                  padding: '8px 10px',
+                  borderRadius: 10,
+                  border: `1px solid ${surface('chrome-edge')}`,
+                  borderLeft: `4px solid ${TRACK_COLORS[c.deck].light}`,
+                }}
+              >
+                <strong style={{ fontSize: 15 }}>{cardTitle(c.kind)}</strong>
+                <p style={{ fontSize: 13, opacity: 0.8, marginTop: 2 }}>
+                  {cardDetail(c.kind)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {sections.map(([title, actions, describe]) =>
         actions.length === 0 ? null : (
           <section key={title} style={{ marginBottom: 16 }}>
             <h3 style={{ fontWeight: 600, marginBottom: 8 }}>{title}</h3>
+            {title === 'City improvements' && (
+              <ul
+                style={{
+                  fontSize: 13,
+                  opacity: 0.8,
+                  marginBottom: 8,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                {(['trade', 'politics', 'science'] as ImprovementTrack[]).map(
+                  (t) => (
+                    <li key={t}>{TRACK_TEXT[t].detail}</li>
+                  ),
+                )}
+              </ul>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {actions.map((a, i) => (
                 <Button key={i} onClick={() => run(a)}>

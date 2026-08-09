@@ -211,6 +211,75 @@ describe('commodity production', () => {
   });
 });
 
+describe('trading commodities', () => {
+  const playing = (seed: string, hand: Record<string, number>): GameState => {
+    const state = ckGame(seed);
+    const draft: GameState = { ...state, phase: 'main', turn: 4 };
+    draft.players[0].hand = hand;
+    return draft;
+  };
+
+  it('lets the bank take commodities four for one', () => {
+    const draft = playing('paper', { paper: 4 });
+    const result = applyAction(draft, {
+      type: 'bank_trade',
+      give: { paper: 4 },
+      receive: { ore: 1 },
+      playerId: draft.players[0].id,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.players[0].hand.ore).toBe(1);
+    expect(result.state.players[0].hand.paper ?? 0).toBe(0);
+  });
+
+  it('lets a commodity be bought as well as sold', () => {
+    const draft = playing('buy-cloth', { ore: 4 });
+    const result = applyAction(draft, {
+      type: 'bank_trade',
+      give: { ore: 4 },
+      receive: { cloth: 1 },
+      playerId: draft.players[0].id,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.players[0].hand.cloth).toBe(1);
+  });
+
+  it('refuses three of a commodity without a generic harbour', () => {
+    const draft = playing('short', { coin: 3 });
+    const result = applyAction(draft, {
+      type: 'bank_trade',
+      give: { coin: 3 },
+      receive: { grain: 1 },
+      playerId: draft.players[0].id,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('still refuses commodities when Cities & Knights is off', () => {
+    const base = createGame({ players: SEATS, options: { seed: 'nock' } });
+    const draft: GameState = { ...base, phase: 'main', turn: 4 };
+    draft.players[0].hand = { paper: 4 };
+    const result = applyAction(draft, {
+      type: 'bank_trade',
+      give: { paper: 4 },
+      receive: { ore: 1 },
+      playerId: draft.players[0].id,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it('offers commodity swaps among the legal moves', () => {
+    const draft = playing('offered', { paper: 4 });
+    const legal = allLegalActions(draft, draft.players[0].id);
+    const commodityTrade = legal.some(
+      (a) => a.type === 'bank_trade' && (a.give.paper ?? 0) > 0,
+    );
+    expect(commodityTrade).toBe(true);
+  });
+});
+
 describe('improvements', () => {
   it('charges rising amounts of the track commodity', () => {
     expect(improvementCost(1)).toBe(1);

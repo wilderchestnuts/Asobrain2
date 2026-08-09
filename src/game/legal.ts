@@ -37,6 +37,7 @@ import type {
   Tradeable,
 } from './types';
 import {
+  COMMODITIES,
   COMMODITY_FOR_TERRAIN,
   COSTS,
   PRODUCING_TERRAINS,
@@ -124,6 +125,28 @@ export function portRatios(
       ratios[port.kind] = Math.min(ratios[port.kind], port.ratio);
     }
   }
+  return ratios;
+}
+
+/**
+ * Exchange rate for everything tradeable, not just resources.
+ *
+ * Cities & Knights commodities can go to the bank like anything else, but no
+ * port deals in them — so a commodity is 4:1, or 3:1 if you hold a generic
+ * harbour. Refusing them outright, as this used to, left a player sitting on
+ * unusable paper with no way to convert it.
+ */
+export function tradeRatios(
+  state: GameState,
+  playerId: PlayerId,
+): Record<Tradeable, number> {
+  const ratios = portRatios(state, playerId) as Record<Tradeable, number>;
+  const generic = state.board.ports.some(
+    (port) =>
+      port.kind === 'any' &&
+      port.vertices.some((v) => settlementAt(state, v)?.owner === playerId),
+  );
+  for (const c of COMMODITIES) ratios[c] = generic ? 3 : 4;
   return ratios;
 }
 
@@ -452,12 +475,13 @@ export function bankTradeError(
   if (!isCurrentPlayer(state, playerId)) return 'it is not your turn';
   if (!canAfford(p.hand, give)) return 'you do not have those cards';
 
-  const ratios = portRatios(state, playerId);
+  const ck = state.options.expansions.citiesAndKnights;
+  const ratios = tradeRatios(state, playerId);
   let credits = 0;
   for (const k of ALL_TRADEABLES) {
     const n = count(give, k);
     if (!n) continue;
-    if (!isResource(k)) return 'the bank does not trade commodities';
+    if (!isResource(k) && !ck) return 'the bank does not trade commodities';
     if (n % ratios[k] !== 0) return `you must give ${ratios[k]} ${k} at a time`;
     credits += n / ratios[k];
   }
@@ -467,16 +491,16 @@ export function bankTradeError(
   for (const k of ALL_TRADEABLES) {
     const n = count(receive, k);
     if (!n) continue;
-    if (!isResource(k)) return 'the bank does not trade commodities';
-    if (count(give, k)) return 'you cannot trade a resource for itself';
+    if (!isResource(k) && !ck) return 'the bank does not trade commodities';
+    if (count(give, k)) return 'you cannot trade a card for itself';
     wanted += n;
   }
   if (wanted !== credits) {
     return `that trade is worth ${credits}, but you asked for ${wanted}`;
   }
-  for (const r of RESOURCES) {
-    if (count(receive, r) > bankStock(state, r)) {
-      return `the bank is out of ${r}`;
+  for (const k of ALL_TRADEABLES) {
+    if (count(receive, k) > bankStock(state, k)) {
+      return `the bank is out of ${k}`;
     }
   }
   return null;
@@ -826,12 +850,14 @@ function bankTradeActions(
 ): GameAction[] {
   const p = playerById(state, playerId);
   if (!p) return [];
-  const ratios = portRatios(state, playerId);
+  const ck = state.options.expansions.citiesAndKnights;
+  const kinds: Tradeable[] = ck ? ALL_TRADEABLES : [...RESOURCES];
+  const ratios = tradeRatios(state, playerId);
   const out: GameAction[] = [];
-  for (const give of RESOURCES) {
+  for (const give of kinds) {
     const n = ratios[give];
     if (count(p.hand, give) < n) continue;
-    for (const want of RESOURCES) {
+    for (const want of kinds) {
       if (want === give || bankStock(state, want) < 1) continue;
       out.push({
         playerId,

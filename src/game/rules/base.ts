@@ -53,6 +53,7 @@ import { updateLargestArmy } from '../scoring';
 import type {
   GameState,
   Hand,
+  LogEntry,
   PendingAction,
   Phase,
   Player,
@@ -84,8 +85,15 @@ export function logLine(
   ctx: Ctx,
   playerId: PlayerId | undefined,
   message: string,
+  extra?: { kind?: LogEntry['kind']; data?: LogEntry['data'] },
 ): void {
-  draft.log.push({ turn: draft.turn, playerId, message, at: ctx.now });
+  draft.log.push({
+    turn: draft.turn,
+    playerId,
+    message,
+    at: ctx.now,
+    ...extra,
+  });
 }
 
 const enabledModules = (draft: GameState, ctx: Ctx): RulesModule[] =>
@@ -248,6 +256,8 @@ function distributeProduction(
   roll: number,
 ): void {
   const { owed, goldPicks } = productionFor(draft, roll);
+  /** What each player actually walked away with, for the play-by-play. */
+  const paid: Record<PlayerId, Hand> = {};
 
   // Under C&K this loop also carries the three commodities, which obey the
   // same bank-shortage rule as resources.
@@ -265,13 +275,18 @@ function distributeProduction(
 
     if (demand <= stock) {
       for (const p of claimants) {
-        p.hand = add(p.hand, { [resource]: count(owed[p.id], resource) });
+        const n = count(owed[p.id], resource);
+        p.hand = add(p.hand, { [resource]: n });
+        (paid[p.id] ??= {})[resource] = n;
       }
       continue;
     }
     if (claimants.length === 1) {
       const p = claimants[0];
-      if (stock > 0) p.hand = add(p.hand, { [resource]: stock });
+      if (stock > 0) {
+        p.hand = add(p.hand, { [resource]: stock });
+        (paid[p.id] ??= {})[resource] = stock;
+      }
       logLine(
         draft,
         ctx,
@@ -285,6 +300,22 @@ function distributeProduction(
       ctx,
       undefined,
       `the bank is short of ${resource}, so nobody receives any`,
+    );
+  }
+
+  // One line per player, so a spectator can see who got what.
+  for (const p of draft.players) {
+    const gained = paid[p.id];
+    const picks = goldPicks[p.id] ?? 0;
+    if (!gained && picks === 0) continue;
+    logLine(
+      draft,
+      ctx,
+      p.id,
+      picks > 0
+        ? `collected ${describeGain(gained)} and ${picks} from gold`
+        : `collected ${describeGain(gained)}`,
+      { kind: 'gain', data: { gained: gained ?? {}, goldPicks: picks } },
     );
   }
 
@@ -302,6 +333,13 @@ function distributeProduction(
     draft.phase = 'main';
   }
 }
+
+const describeGain = (hand: Hand | undefined): string => {
+  const parts = Object.entries(hand ?? {})
+    .filter(([, n]) => (n ?? 0) > 0)
+    .map(([k, n]) => `${n} ${k}`);
+  return parts.length ? parts.join(', ') : 'nothing';
+};
 
 function sevenRolled(draft: GameState, ctx: Ctx): void {
   const roller = currentPlayerOf(draft)!;
@@ -342,7 +380,10 @@ function handle(
       const red = ctx.rng.die();
       draft.lastRoll = { white, red };
       const total = white + red;
-      logLine(draft, ctx, actor.id, `rolled ${total}`);
+      logLine(draft, ctx, actor.id, `rolled ${total}`, {
+        kind: 'roll',
+        data: { dice: { white, red } },
+      });
 
       for (const m of lifecycleModules(draft, ctx)) m.onRoll?.(draft, ctx);
 
@@ -376,7 +417,10 @@ function handle(
         kind: 'settlement',
       });
       actor.supply.settlements -= 1;
-      logLine(draft, ctx, actor.id, 'built a settlement');
+      logLine(draft, ctx, actor.id, 'built a settlement', {
+        kind: 'build',
+        data: { piece: 'settlement' },
+      });
       if (draft.phase === 'setup_second') {
         grantInitialResources(draft, ctx, actor, action.vertex);
       }
@@ -390,7 +434,10 @@ function handle(
       });
       if (err) return fail(err);
       placeRoad(draft, actor, action.edge, setup);
-      logLine(draft, ctx, actor.id, 'built a road');
+      logLine(draft, ctx, actor.id, 'built a road', {
+        kind: 'build',
+        data: { piece: 'road' },
+      });
       if (setup) advanceSetup(draft, ctx);
       return ok(draft);
     }
@@ -403,7 +450,10 @@ function handle(
       actor.hand = subtract(actor.hand, COSTS.city);
       actor.supply.cities -= 1;
       actor.supply.settlements += 1; // the settlement goes back in the box
-      logLine(draft, ctx, actor.id, 'upgraded to a city');
+      logLine(draft, ctx, actor.id, 'upgraded to a city', {
+        kind: 'build',
+        data: { piece: 'city' },
+      });
       return ok(draft);
     }
 
