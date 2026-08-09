@@ -112,6 +112,7 @@ function playGame(seed: string, maxSteps = 20000, overrides = {}): PlayResult {
     if (result.ok) {
       state = result.state;
       checkInvariants(state);
+      checkPieceInvariants(state);
     } else {
       // A legal action being rejected means legal.ts and base.ts disagree,
       // which is exactly the bug class this test exists to catch.
@@ -125,6 +126,25 @@ function playGame(seed: string, maxSteps = 20000, overrides = {}): PlayResult {
 
 /** Assertions that must hold after every single applied action. */
 function checkInvariants(state: GameState): void {
+  /*
+   * Nobody may be asked for something they cannot give.
+   *
+   * A pending task with no legal answer wedges the game permanently — the
+   * player it names can never act, and nobody else may act either. This is how
+   * a real game got stuck: the barbarians demanded a city from a player whose
+   * only cities were metropolises, which cannot be destroyed.
+   */
+  for (const task of state.pending) {
+    if (task.kind === 'resume') continue;
+    const options = allLegalActions(state, task.playerId);
+    expect(
+      options.length,
+      `"${task.kind}" is owed by ${task.playerId} but they have no legal move`,
+    ).toBeGreaterThan(0);
+  }
+}
+
+function checkPieceInvariants(state: GameState): void {
   for (const p of state.players) {
     for (const [k, n] of Object.entries(p.hand)) {
       expect(n, `${p.name} has negative ${k}`).toBeGreaterThanOrEqual(0);

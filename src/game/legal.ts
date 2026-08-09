@@ -615,6 +615,25 @@ export function legalActions(
       const n = Number(task.data?.count ?? 0);
       out.push({ ...me, type: 'discard', hand: suggestedDiscard(p.hand, n) });
     }
+    /*
+     * Driven by the queue, not by whose turn it is.
+     *
+     * These used to sit in the current-player switch, so a robber or steal owed
+     * by anyone else had no legal answer at all and the game hung. Whoever the
+     * task names is the one who must act, full stop.
+     */
+    if (task.kind === 'robber') {
+      for (const hex of legalRobberHexes(state)) {
+        out.push({ ...me, type: 'move_robber', hex });
+      }
+    }
+    if (task.kind === 'steal') {
+      const victims = (task.data?.victims as PlayerId[] | undefined) ?? [];
+      if (victims.length === 0) {
+        out.push({ ...me, type: 'steal', victim: null });
+      }
+      for (const v of victims) out.push({ ...me, type: 'steal', victim: v });
+    }
     if (task.kind === 'gold' && state.phase === 'choose_gold') {
       const n = Number(task.data?.count ?? 0);
       const affordable = RESOURCES.filter((r) => bankStock(state, r) > 0);
@@ -689,31 +708,6 @@ export function legalActions(
         }
         out.push(...devCardActions(state, playerId));
         out.push(...bankTradeActions(state, playerId));
-        break;
-      }
-      // The phase says *something* is owed, but not necessarily by the player
-      // asking. Both of these are offered only to whoever actually owes them —
-      // otherwise a bystander is handed a move the reducer will refuse.
-      case 'move_robber': {
-        const owed = state.pending.some(
-          (t) => t.kind === 'robber' && t.playerId === playerId,
-        );
-        if (!owed) break;
-        for (const hex of legalRobberHexes(state)) {
-          out.push({ ...me, type: 'move_robber', hex });
-        }
-        break;
-      }
-      case 'steal': {
-        const task = state.pending.find(
-          (t) => t.kind === 'steal' && t.playerId === playerId,
-        );
-        if (!task) break;
-        const victims = (task.data?.victims as PlayerId[] | undefined) ?? [];
-        if (victims.length === 0) {
-          out.push({ ...me, type: 'steal', victim: null });
-        }
-        for (const v of victims) out.push({ ...me, type: 'steal', victim: v });
         break;
       }
       default:

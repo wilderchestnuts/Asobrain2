@@ -250,16 +250,31 @@ function barbarianAttack(draft: GameState, ctx: Ctx): void {
   } else {
     // The players who contributed least lose a city each. Players with no
     // cities have nothing to lose and are skipped.
-    const withCities = draft.players.filter((p) => cityCount(draft, p.id) > 0);
-    const weakest = Math.min(
-      ...withCities.map((p) => contributions.get(p.id) ?? 0),
-    );
-    const losers = withCities.filter(
-      (p) => (contributions.get(p.id) ?? 0) === weakest,
+    // Only players with something the barbarians can actually take are on the
+    // hook. A metropolis cannot be destroyed, so a player whose every city is
+    // one has nothing to give — and queueing the demand anyway left them with
+    // no legal move at all, which hung the whole game.
+    const canLose = (p: Player): boolean =>
+      draft.settlements.some(
+        (t) => t.owner === p.id && t.kind === 'city' && !t.metropolis,
+      ) || knightsOf(draft, p.id).length > 0;
+
+    const exposed = draft.players.filter(
+      (p) => !p.resigned && cityCount(draft, p.id) > 0 && canLose(p),
     );
     logLine(draft, ctx, undefined, 'the barbarians overwhelmed Catan');
-    for (const p of losers) {
-      draft.pending.push({ kind: 'barbarian_loss', playerId: p.id });
+
+    if (exposed.length === 0) {
+      logLine(draft, ctx, undefined, 'but there was nothing left to take');
+    } else {
+      const weakest = Math.min(
+        ...exposed.map((p) => contributions.get(p.id) ?? 0),
+      );
+      for (const p of exposed) {
+        if ((contributions.get(p.id) ?? 0) === weakest) {
+          draft.pending.push({ kind: 'barbarian_loss', playerId: p.id });
+        }
+      }
     }
   }
 

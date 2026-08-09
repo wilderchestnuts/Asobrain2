@@ -92,8 +92,23 @@ function playOut(state: GameState, seed: string, maxSteps = 40000) {
       { ...action, playerId: actor },
       { now: steps },
     );
-    if (result.ok) state = result.state;
-    else rejected.push(`${action.type}: ${result.error}`);
+    if (result.ok) {
+      state = result.state;
+      // Nobody may be owed something they cannot give. The barbarians used to
+      // demand a city from a player whose only cities were metropolises, which
+      // cannot be destroyed — and that hung the game for good.
+      for (const task of state.pending) {
+        if (task.kind === 'resume') continue;
+        const options = allLegalActions(state, task.playerId);
+        if (options.length === 0) {
+          throw new Error(
+            `"${task.kind}" owed by ${task.playerId} with no legal move (turn ${state.turn})`,
+          );
+        }
+      }
+    } else {
+      rejected.push(`${action.type}: ${result.error}`);
+    }
     steps++;
   }
   return { state, steps, rejected };
