@@ -114,7 +114,22 @@ export interface PlayerPalette {
   dash: string;
 }
 
+/**
+ * Seat order is the reading order: dark red, blue, purple, light orange, then
+ * two spares. The first four are deliberately far apart in both hue and
+ * lightness — the previous set put a red and an orange side by side, which two
+ * players could not tell apart on a board.
+ */
 export const PLAYER_PALETTE: readonly PlayerPalette[] = [
+  {
+    key: 'crimson',
+    label: 'Crimson',
+    base: { light: '#A81E1E', dark: '#D33A3A' },
+    ink: { light: '#5A0D0D', dark: '#380606' },
+    lite: { light: '#F4C2C2', dark: '#FFDCDC' },
+    emblem: 'triangle',
+    dash: '18 12',
+  },
   {
     key: 'azure',
     label: 'Azure',
@@ -125,24 +140,6 @@ export const PLAYER_PALETTE: readonly PlayerPalette[] = [
     dash: '',
   },
   {
-    key: 'vermilion',
-    label: 'Vermilion',
-    base: { light: '#D2440E', dark: '#F0672B' },
-    ink: { light: '#752606', dark: '#421202' },
-    lite: { light: '#FBCCB2', dark: '#FFE3D2' },
-    emblem: 'triangle',
-    dash: '18 12',
-  },
-  {
-    key: 'amber',
-    label: 'Amber',
-    base: { light: '#E2A400', dark: '#FFC42E' },
-    ink: { light: '#7A5900', dark: '#463300' },
-    lite: { light: '#FCEBB4', dark: '#FFF4D2' },
-    emblem: 'diamond',
-    dash: '4 10',
-  },
-  {
     key: 'violet',
     label: 'Violet',
     base: { light: '#8B45CE', dark: '#B27CEE' },
@@ -150,6 +147,15 @@ export const PLAYER_PALETTE: readonly PlayerPalette[] = [
     lite: { light: '#DFC6F6', dark: '#F0E2FF' },
     emblem: 'star',
     dash: '22 8 4 8',
+  },
+  {
+    key: 'tangerine',
+    label: 'Tangerine',
+    base: { light: '#F2913D', dark: '#FFAB5E' },
+    ink: { light: '#8A4708', dark: '#5A2C02' },
+    lite: { light: '#FFE3C6', dark: '#FFF0E0' },
+    emblem: 'diamond',
+    dash: '4 10',
   },
   {
     key: 'teal',
@@ -176,18 +182,25 @@ export const PLAYER_PALETTE: readonly PlayerPalette[] = [
  * safe palette rather than painting an actual red/green pair.
  */
 const COLOR_ALIASES: Record<string, string> = {
-  red: 'vermilion',
-  orange: 'vermilion',
-  brown: 'vermilion',
+  red: 'crimson',
+  crimson: 'crimson',
+  brown: 'crimson',
   blue: 'azure',
   cyan: 'azure',
   navy: 'azure',
-  yellow: 'amber',
-  gold: 'amber',
   purple: 'violet',
+  violet: 'violet',
   magenta: 'violet',
   pink: 'violet',
+  // Orange must never land on the red entry: two seats painted the same colour
+  // is indistinguishable on the board, which is exactly what used to happen.
+  orange: 'tangerine',
+  tangerine: 'tangerine',
+  amber: 'tangerine',
+  yellow: 'tangerine',
+  gold: 'tangerine',
   green: 'teal',
+  teal: 'teal',
   emerald: 'teal',
   white: 'slate',
   black: 'slate',

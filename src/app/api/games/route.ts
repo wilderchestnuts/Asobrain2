@@ -18,7 +18,7 @@ import {
   defaultVictoryPoints,
 } from '@/game/setup';
 
-const COLORS = ['red', 'blue', 'white', 'orange', 'green', 'brown'];
+const COLORS = ['red', 'blue', 'purple', 'orange', 'green', 'white'];
 
 interface SeatInput {
   /** 'me' claims the seat for the caller, 'human' leaves it open to join. */

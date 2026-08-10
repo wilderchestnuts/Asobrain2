@@ -490,8 +490,12 @@ describe('scenarios', () => {
     expect(Object.keys(SCENARIOS).sort()).toEqual([
       'four-islands',
       'fog-islands',
+      'golden-fog',
       'heading-for-new-shores',
+      'long-chain',
       'random',
+      'six-islands',
+      'split-continent',
       'the-great-crossing',
       'through-the-desert',
     ].sort());
@@ -564,7 +568,15 @@ describe('scenarios', () => {
         (h) => h.terrain === 'gold' || h.hidden?.terrain === 'gold',
       );
       expect(gold.length).toBeGreaterThan(0);
-      expect(board.ports.length).toBeGreaterThanOrEqual(9);
+
+      // Ports scale with coastline rather than being a flat nine. Nine was
+      // right when every preset was a 19-hex island, but a map whose whole
+      // point is a cramped home island cannot seat that many without a port on
+      // nearly every corner — and ports must not share a vertex.
+      const landCount = landHexes(board).length;
+      expect(board.ports.length).toBeGreaterThanOrEqual(
+        Math.min(9, Math.max(3, Math.floor(landCount / 2))),
+      );
     },
   );
 

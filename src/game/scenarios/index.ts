@@ -8,8 +8,10 @@
 import { generateBoard, type Scenario } from '../board';
 import type { Rng } from '../rng';
 import type { Board, GameOptions } from '../types';
+import { longChain, sixIslands, splitContinent } from './archipelago';
 import { fogIslands } from './fogIslands';
 import { fourIslands } from './fourIslands';
+import { goldenFog } from './goldenFog';
 import { headingForNewShores } from './headingForNewShores';
 import { theGreatCrossing } from './theGreatCrossing';
 import { throughTheDesert } from './throughTheDesert';
@@ -48,6 +50,10 @@ export const SCENARIOS: Record<string, Scenario> = {
   [fogIslands.id]: fogIslands,
   [throughTheDesert.id]: throughTheDesert,
   [theGreatCrossing.id]: theGreatCrossing,
+  [goldenFog.id]: goldenFog,
+  [sixIslands.id]: sixIslands,
+  [longChain.id]: longChain,
+  [splitContinent.id]: splitContinent,
 };
 
 export const getScenario = (id: string): Scenario | undefined => SCENARIOS[id];
