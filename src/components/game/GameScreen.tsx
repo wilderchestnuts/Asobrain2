@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Board, type Pending } from '@/components/board/Board';
+import { KnightPiece } from '@/components/board/Piece';
 import { PlaybackOverlay } from '@/components/game/Playback';
 import { useTurnPlayback } from '@/hooks/useTurnPlayback';
 import {
@@ -35,6 +36,7 @@ import { allLegalActions } from '@/game/reducer';
 import { ALL_TRADEABLES, count as handCount, totalCards } from '@/game/hand';
 import { discardCountFor } from '@/game/legal';
 import type { EdgeId, VertexId } from '@/game/hex';
+import { vertexHexes } from '@/game/hex';
 import type { GameAction } from '@/game/actions';
 import type {
   GameState,
@@ -44,16 +46,29 @@ import type {
 } from '@/game/types';
 import { RESOURCES } from '@/game/types';
 import { cardDetail, cardTitle, TRACK_TEXT } from '@/game/cardText';
-import { playerStyles, surface, TRACK_COLORS } from '@/lib/theme';
+import {
+  playerStyles,
+  surface,
+  TERRAIN_LABEL,
+  TRACK_COLORS,
+} from '@/lib/theme';
 
+/**
+ * What a tap on the board would currently do.
+ *
+ * Two of these name a *specific piece* rather than a kind of build, which is
+ * why this is an object and not a bare string: moving a knight has to know
+ * which knight, and playing the merchant has to know which card. Without that
+ * the board could only offer the union of every knight's destinations, and a
+ * tap on a shared square would be a coin toss.
+ */
 type BuildMode =
-  | 'settlement'
-  | 'city'
-  | 'road'
-  | 'ship'
-  | 'knight'
-  | 'wall'
+  | { kind: 'settlement' | 'city' | 'road' | 'ship' | 'knight' | 'wall' }
+  | { kind: 'move_knight'; knightId: string }
+  | { kind: 'merchant'; cardId: string }
   | null;
+
+type BuildKind = NonNullable<BuildMode>['kind'];
 
 /**
  * A left rail buys vertical space on a wide screen, where the board is
@@ -103,10 +118,11 @@ export function GameScreen({ game }: { game: UseGame }) {
   }, [state, myPlayerId]);
 
   // A build mode that stops being possible must not leave stale highlights.
+  // Checked against the specific knight or card, not just the action type: a
+  // knight that has already acted would otherwise keep the board lit up.
   useEffect(() => {
     if (!mode) return;
-    const stillOffered = legal.some((a) => actionTypeFor(mode) === a.type);
-    if (!stillOffered) setMode(null);
+    if (!legal.some((a) => matchesMode(a, mode))) setMode(null);
   }, [legal, mode]);
 
   const act = useCallback(
@@ -131,14 +147,15 @@ export function GameScreen({ game }: { game: UseGame }) {
   // --- what the board should highlight, derived from the legal moves ---
   const highlightVertices = verticesFor(legal, mode, owed?.kind);
   const highlightEdges = edgesFor(legal, mode);
-  const highlightHexes = hexesFor(legal, owed?.kind);
+  const highlightHexes = hexesFor(legal, mode, owed?.kind);
 
   const onVertexTap = (vertex: VertexId) => {
-    const match = legal.find(
-      (a) =>
-        'vertex' in a &&
-        a.vertex === vertex &&
-        (mode ? a.type === actionTypeFor(mode) : true),
+    const match = legal.find((a) =>
+      mode?.kind === 'move_knight'
+        ? matchesMode(a, mode) && a.type === 'move_knight' && a.to === vertex
+        : 'vertex' in a &&
+          a.vertex === vertex &&
+          (mode ? a.type === actionTypeFor(mode) : true),
     );
     if (match) void act(stripId(match));
   };
@@ -154,12 +171,22 @@ export function GameScreen({ game }: { game: UseGame }) {
   };
 
   const onHexTap = (coord: { q: number; r: number }) => {
-    const match = legal.find(
-      (a) =>
+    const match = legal.find((a) => {
+      if (mode?.kind === 'merchant') {
+        return (
+          matchesMode(a, mode) &&
+          a.type === 'play_progress_card' &&
+          a.choice?.kind === 'pick_hex' &&
+          a.choice.hex.q === coord.q &&
+          a.choice.hex.r === coord.r
+        );
+      }
+      return (
         (a.type === 'move_robber' || a.type === 'move_pirate') &&
         a.hex.q === coord.q &&
-        a.hex.r === coord.r,
-    );
+        a.hex.r === coord.r
+      );
+    });
     if (match) void act(stripId(match));
   };
 
@@ -203,13 +230,17 @@ export function GameScreen({ game }: { game: UseGame }) {
           settlements={state.settlements}
           roads={state.roads}
           knights={state.knights}
+          merchant={state.merchant}
           highlightVertices={highlightVertices}
           highlightEdges={highlightEdges}
           highlightHexes={highlightHexes}
-          vertexGhost={
-            mode === 'city' ? 'city' : mode === 'knight' ? 'knight' : 'settlement'
+          hexLabel={
+            mode?.kind === 'merchant'
+              ? 'Send the merchant here'
+              : 'Move the robber here'
           }
-          edgeGhost={mode === 'ship' ? 'ship' : 'road'}
+          vertexGhost={vertexGhostFor(mode)}
+          edgeGhost={edgeGhostFor(mode)}
           onVertexTap={onVertexTap}
           onEdgeTap={onEdgeTap}
           onHexTap={onHexTap}
@@ -329,9 +360,14 @@ export function GameScreen({ game }: { game: UseGame }) {
       <CardsSheet
         open={sheet === 'cards'}
         onClose={() => setSheet(null)}
+        state={state}
         me={me}
         legal={legal}
         onAct={act}
+        onAim={(next) => {
+          setMode(next);
+          setSheet(null);
+        }}
       />
 
       <LogSheet
@@ -519,7 +555,7 @@ function BottomBar({
   const ck = state.options.expansions.citiesAndKnights;
   const roll = state.lastRoll;
 
-  const modes: Array<[BuildMode, string, string]> = [
+  const modes: Array<[BuildKind, string, string]> = [
     ['settlement', 'build_settlement', 'Settle'],
     ['city', 'build_city', 'City'],
     ['road', 'build_road', 'Road'],
@@ -582,8 +618,10 @@ function BottomBar({
           has(type) ? (
             <Button
               key={m}
-              tone={mode === m ? 'primary' : 'default'}
-              onClick={() => setMode(mode === m ? null : m)}
+              tone={mode?.kind === m ? 'primary' : 'default'}
+              onClick={() =>
+                setMode(mode?.kind === m ? null : ({ kind: m } as BuildMode))
+              }
             >
               {label}
             </Button>
@@ -633,7 +671,11 @@ function BottomBar({
 
       {mode && (
         <p style={{ fontSize: 13, opacity: 0.8 }}>
-          Tap a highlighted spot, then tap it again to confirm.{' '}
+          {mode.kind === 'move_knight'
+            ? 'Tap where the knight should go, then tap again to confirm.'
+            : mode.kind === 'merchant'
+              ? 'Tap the hex to send the merchant to, then tap again to confirm.'
+              : 'Tap a highlighted spot, then tap it again to confirm.'}{' '}
           <button
             type="button"
             onClick={() => setMode(null)}
@@ -1003,21 +1045,40 @@ function OutgoingTrade({
 function CardsSheet({
   open,
   onClose,
+  state,
   me,
   legal,
   onAct,
+  onAim,
 }: {
   open: boolean;
   onClose: () => void;
+  state: GameState;
   me: Player | null;
   legal: GameAction[];
   onAct: (a: ClientAction) => void;
+  /** Close the sheet and hand the board a target to aim at. */
+  onAim: (mode: BuildMode) => void;
 }) {
   const group = (type: string) => legal.filter((a) => a.type === type);
   const run = (a: GameAction) => {
     onAct(stripId(a));
     onClose();
   };
+
+  /**
+   * The merchant wants a hex, so it goes to the board rather than being played
+   * from a list of thirty near-identical buttons. Everything else in this
+   * section already carries its own choice.
+   */
+  const merchantCards = new Set(
+    group('play_progress_card').flatMap((a) =>
+      a.type === 'play_progress_card' &&
+      me?.progressCards?.find((c) => c.id === a.cardId)?.kind === 'merchant'
+        ? [a.cardId]
+        : [],
+    ),
+  );
 
   const sections: Array<[string, GameAction[], (a: GameAction) => string]> = [
     [
@@ -1026,18 +1087,10 @@ function CardsSheet({
       (a) => (a.type === 'buy_improvement' ? `Improve ${a.track}` : ''),
     ],
     [
-      'Knights',
-      [
-        ...group('activate_knight'),
-        ...group('promote_knight'),
-        ...group('move_knight').slice(0, 12),
-        ...group('chase_robber'),
-      ],
-      (a) => a.type.replace(/_/g, ' '),
-    ],
-    [
       'Progress cards',
-      group('play_progress_card').slice(0, 30),
+      group('play_progress_card')
+        .filter((a) => a.type === 'play_progress_card' && !merchantCards.has(a.cardId))
+        .slice(0, 30),
       (a) =>
         a.type === 'play_progress_card'
           ? `${cardTitle(
@@ -1090,6 +1143,29 @@ function CardsSheet({
         </section>
       )}
 
+      {merchantCards.size > 0 && (
+        <section style={{ marginBottom: 16 }}>
+          <h3 style={{ fontWeight: 600, marginBottom: 8 }}>Merchant</h3>
+          {[...merchantCards].map((cardId) => (
+            <Button
+              key={cardId}
+              tone="primary"
+              onClick={() => onAim({ kind: 'merchant', cardId })}
+            >
+              Choose a hex on the board
+            </Button>
+          ))}
+        </section>
+      )}
+
+      <KnightRoster
+        state={state}
+        me={me}
+        legal={legal}
+        onRun={run}
+        onAim={onAim}
+      />
+
       {sections.map(([title, actions, describe]) =>
         actions.length === 0 ? null : (
           <section key={title} style={{ marginBottom: 16 }}>
@@ -1122,11 +1198,136 @@ function CardsSheet({
           </section>
         ),
       )}
-      {sections.every(([, a]) => a.length === 0) && (
-        <p style={{ opacity: 0.7 }}>Nothing to play right now.</p>
-      )}
+      {sections.every(([, a]) => a.length === 0) &&
+        merchantCards.size === 0 &&
+        (state.knights ?? []).every((k) => k.owner !== me?.id) && (
+          <p style={{ opacity: 0.7 }}>Nothing to play right now.</p>
+        )}
     </Sheet>
   );
+}
+
+/**
+ * Your knights, one panel each, with that knight's own actions on it.
+ *
+ * They used to be a flat run of buttons reading "move knight" twelve times
+ * over, which named neither the knight nor where it would end up — with more
+ * than one knight on the board there was no way to say which you meant. A
+ * knight is a piece in a place, so each panel says which piece and which
+ * place, and moving hands the choice of square to the board.
+ */
+function KnightRoster({
+  state,
+  me,
+  legal,
+  onRun,
+  onAim,
+}: {
+  state: GameState;
+  me: Player | null;
+  legal: GameAction[];
+  onRun: (a: GameAction) => void;
+  onAim: (mode: BuildMode) => void;
+}) {
+  const mine = (state.knights ?? []).filter((k) => k.owner === me?.id);
+  if (mine.length === 0) return null;
+
+  const style = playerStyles(state.players)[me!.id];
+  const forKnight = (id: string, type: string) =>
+    legal.find((a) => a.type === type && 'knightId' in a && a.knightId === id);
+
+  return (
+    <section style={{ marginBottom: 16 }}>
+      <h3 style={{ fontWeight: 600, marginBottom: 8 }}>Your knights</h3>
+      <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {mine.map((k) => {
+          const activate = forKnight(k.id, 'activate_knight');
+          const promote = forKnight(k.id, 'promote_knight');
+          const chase = forKnight(k.id, 'chase_robber');
+          const canMove = legal.some(
+            (a) => a.type === 'move_knight' && a.knightId === k.id,
+          );
+
+          return (
+            <li
+              key={k.id}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 10,
+                border: `1px solid ${surface('chrome-edge')}`,
+                borderLeft: `4px solid ${style.base}`,
+                display: 'flex',
+                gap: 10,
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
+              <svg width={34} height={34} viewBox="-22 -22 44 44" aria-hidden>
+                <KnightPiece
+                  x={0}
+                  y={0}
+                  rank={k.rank}
+                  active={k.active}
+                  style={style}
+                  size={38}
+                />
+              </svg>
+
+              <div style={{ minWidth: 150, flex: 1 }}>
+                <strong style={{ fontSize: 15 }}>
+                  {KNIGHT_RANK[k.rank]} knight
+                </strong>
+                <p style={{ fontSize: 13, opacity: 0.8 }}>
+                  {k.active ? 'Active' : 'Inactive'}
+                  {k.usedThisTurn && ' · already acted'} ·{' '}
+                  {describeVertex(state, k.vertex)}
+                </p>
+              </div>
+
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {activate && (
+                  <Button onClick={() => onRun(activate)}>Activate</Button>
+                )}
+                {promote && (
+                  <Button onClick={() => onRun(promote)}>Promote</Button>
+                )}
+                {canMove && (
+                  <Button
+                    tone="primary"
+                    onClick={() => onAim({ kind: 'move_knight', knightId: k.id })}
+                  >
+                    Move
+                  </Button>
+                )}
+                {chase && (
+                  <Button onClick={() => onRun(chase)}>Chase the robber</Button>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+const KNIGHT_RANK: Record<number, string> = {
+  1: 'Basic',
+  2: 'Strong',
+  3: 'Mighty',
+};
+
+/**
+ * Where a vertex is, in the terms players actually use at a table: the hexes
+ * and numbers it touches. A vertex id is three hex coordinates, which locates
+ * it exactly and communicates nothing.
+ */
+function describeVertex(state: GameState, vertex: VertexId): string {
+  const parts = vertexHexes(vertex)
+    .map((c) => state.board.hexes.find((h) => h.coord.q === c.q && h.coord.r === c.r))
+    .filter((h): h is NonNullable<typeof h> => !!h && h.terrain !== 'sea')
+    .map((h) => `${TERRAIN_LABEL[h.terrain]}${h.number ? ` ${h.number}` : ''}`);
+  return parts.length > 0 ? `on ${parts.join(', ')}` : 'on the coast';
 }
 
 function LogSheet({
@@ -1354,10 +1555,14 @@ function Centered({ children }: { children: React.ReactNode }) {
 // ---------------------------------------------------------------------------
 
 const vertexGhostFor = (mode: BuildMode): 'settlement' | 'city' | 'knight' =>
-  mode === 'city' ? 'city' : mode === 'knight' ? 'knight' : 'settlement';
+  mode?.kind === 'city'
+    ? 'city'
+    : mode?.kind === 'knight' || mode?.kind === 'move_knight'
+      ? 'knight'
+      : 'settlement';
 
 const edgeGhostFor = (mode: BuildMode): 'road' | 'ship' =>
-  mode === 'ship' ? 'ship' : 'road';
+  mode?.kind === 'ship' ? 'ship' : 'road';
 
 /** Plain-language description of what confirming would do. */
 function describePending(
@@ -1366,26 +1571,40 @@ function describePending(
   vertexGhost: 'settlement' | 'city' | 'knight',
   edgeGhost: 'road' | 'ship',
 ): string {
-  if (pending.kind === 'hex') return 'Move here?';
+  if (pending.kind === 'hex') {
+    return mode?.kind === 'merchant' ? 'Send the merchant here?' : 'Move here?';
+  }
   if (pending.kind === 'edge') return `Build a ${edgeGhost} here?`;
-  if (mode === 'wall') return 'Build a city wall here?';
+  if (mode?.kind === 'move_knight') return 'Move the knight here?';
+  if (mode?.kind === 'wall') return 'Build a city wall here?';
   return `Build a ${vertexGhost} here?`;
 }
 
+const ACTION_TYPE: Record<BuildKind, string> = {
+  settlement: 'build_settlement',
+  city: 'build_city',
+  road: 'build_road',
+  ship: 'build_ship',
+  knight: 'build_knight',
+  wall: 'build_wall',
+  move_knight: 'move_knight',
+  merchant: 'play_progress_card',
+};
+
 const actionTypeFor = (mode: BuildMode): string =>
-  mode === 'settlement'
-    ? 'build_settlement'
-    : mode === 'city'
-      ? 'build_city'
-      : mode === 'road'
-        ? 'build_road'
-        : mode === 'ship'
-          ? 'build_ship'
-          : mode === 'knight'
-            ? 'build_knight'
-            : mode === 'wall'
-              ? 'build_wall'
-              : '';
+  mode ? ACTION_TYPE[mode.kind] : '';
+
+/** Whether this legal action is the one the current mode is aiming at. */
+function matchesMode(a: GameAction, mode: NonNullable<BuildMode>): boolean {
+  if (a.type !== ACTION_TYPE[mode.kind]) return false;
+  if (mode.kind === 'move_knight') {
+    return a.type === 'move_knight' && a.knightId === mode.knightId;
+  }
+  if (mode.kind === 'merchant') {
+    return a.type === 'play_progress_card' && a.cardId === mode.cardId;
+  }
+  return true;
+}
 
 /**
  * During setup there is exactly one thing to do, so the spots are shown without
@@ -1398,6 +1617,18 @@ function verticesFor(
   owedKind: string | undefined,
 ): VertexId[] {
   if (owedKind && owedKind !== 'resume') return [];
+
+  // A knight's destination is `to`, not `vertex`, and only one knight's
+  // squares may be shown at a time or a shared square is ambiguous.
+  if (mode?.kind === 'move_knight') {
+    return legal
+      .filter((a): a is Extract<GameAction, { type: 'move_knight' }> =>
+        matchesMode(a, mode),
+      )
+      .map((a) => a.to);
+  }
+  if (mode?.kind === 'merchant') return [];
+
   const wanted = mode
     ? [actionTypeFor(mode)]
     : ['build_settlement', 'build_city', 'build_knight', 'build_wall'];
@@ -1417,6 +1648,7 @@ function verticesFor(
 }
 
 function edgesFor(legal: GameAction[], mode: BuildMode): EdgeId[] {
+  if (mode && mode.kind !== 'road' && mode.kind !== 'ship') return [];
   const wanted = mode ? [actionTypeFor(mode)] : ['build_road', 'build_ship'];
   const auto = !mode;
   const out = new Set<EdgeId>();
@@ -1429,7 +1661,22 @@ function edgesFor(legal: GameAction[], mode: BuildMode): EdgeId[] {
   return [...out];
 }
 
-function hexesFor(legal: GameAction[], owedKind: string | undefined) {
+function hexesFor(
+  legal: GameAction[],
+  mode: BuildMode,
+  owedKind: string | undefined,
+): { q: number; r: number }[] {
+  // Sending the merchant is a chosen action rather than something owed, so it
+  // takes precedence over — and cannot collide with — the robber's turn.
+  if (mode?.kind === 'merchant') {
+    return legal
+      .filter((a) => matchesMode(a, mode))
+      .flatMap((a) =>
+        a.type === 'play_progress_card' && a.choice?.kind === 'pick_hex'
+          ? [a.choice.hex]
+          : [],
+      );
+  }
   if (owedKind !== 'robber' && owedKind !== 'pirate') return [];
   return legal
     .filter((a) => a.type === 'move_robber' || a.type === 'move_pirate')

@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { BoardPreview } from '@/components/board/BoardPreview';
 import { Button, TAP, panel } from '@/components/game/parts';
 import {
   createGame,
@@ -142,22 +143,7 @@ export default function LobbyPage() {
           </Row>
 
           {seafarers && (
-            <Row label="Map">
-              <select
-                value={scenario}
-                onChange={(e) => setScenario(e.target.value)}
-                style={control}
-              >
-                <option value="random">Random island</option>
-                {Object.entries(SCENARIOS)
-                  .filter(([id]) => id !== 'random' && id !== 'classic')
-                  .map(([id, s]) => (
-                    <option key={id} value={id}>
-                      {s.name}
-                    </option>
-                  ))}
-              </select>
-            </Row>
+            <MapPicker chosen={scenario} onChoose={setScenario} />
           )}
 
           <Row label="Computer players">
@@ -429,6 +415,89 @@ function GameRow({
   );
 }
 
+/**
+ * Pick a map by looking at it.
+ *
+ * This was a dropdown, which asked you to choose between "The Long Chain" and
+ * "Six Islands" on the strength of the names alone — and since the presets all
+ * used to be a blob of land in a sea border, the names were the only thing
+ * telling them apart. Each card carries the layout it will actually deal.
+ */
+function MapPicker({
+  chosen,
+  onChoose,
+}: {
+  chosen: string;
+  onChoose: (id: string) => void;
+}) {
+  const maps = Object.entries(SCENARIOS).filter(([id]) => id !== 'classic');
+  const detail = SCENARIOS[chosen];
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <span
+        style={{ display: 'block', fontSize: 15, opacity: 0.85, marginBottom: 8 }}
+      >
+        Map
+      </span>
+
+      {/* A horizontal rail rather than a grid: it stays one row on a phone,
+          and the overflow itself hints there is more to the right. */}
+      <div
+        style={{
+          display: 'flex',
+          gap: 10,
+          overflowX: 'auto',
+          paddingBottom: 6,
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
+        {maps.map(([id, s]) => {
+          const active = id === chosen;
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onChoose(id)}
+              aria-pressed={active}
+              style={{
+                flex: '0 0 auto',
+                width: 148,
+                padding: 8,
+                borderRadius: 14,
+                textAlign: 'left',
+                cursor: 'pointer',
+                background: surface('chrome'),
+                border: `2px solid ${
+                  active ? surface('highlight-ring') : surface('chrome-edge')
+                }`,
+              }}
+            >
+              <BoardPreview scenarioId={id} width={132} height={104} />
+              <strong
+                style={{
+                  display: 'block',
+                  fontSize: 14,
+                  marginTop: 6,
+                  lineHeight: 1.25,
+                }}
+              >
+                {s.name}
+              </strong>
+            </button>
+          );
+        })}
+      </div>
+
+      {detail && (
+        <p style={{ fontSize: 13, opacity: 0.78, marginTop: 8, maxWidth: 560 }}>
+          {detail.description} Plays to {detail.victoryPointsToWin}.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div
@@ -462,13 +531,3 @@ function Toggle({
     </Button>
   );
 }
-
-const control: React.CSSProperties = {
-  minHeight: TAP,
-  padding: '0 12px',
-  borderRadius: 12,
-  border: `1px solid ${surface('chrome-edge')}`,
-  background: surface('chrome'),
-  color: 'inherit',
-  fontSize: 15,
-};

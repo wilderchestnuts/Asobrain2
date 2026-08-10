@@ -11,7 +11,7 @@ import { applyAction, allLegalActions } from '../reducer';
 import { createGame, defaultVictoryPoints } from '../setup';
 import { Rng } from '../rng';
 import { computeScores } from '../scoring';
-import { productionFor } from '../legal';
+import { productionFor, tradeRatios } from '../legal';
 import { hexVertices } from '../hex';
 import {
   __internals,
@@ -25,6 +25,7 @@ import {
 } from './citiesKnights';
 import type { GameAction } from '../actions';
 import type { GameState } from '../types';
+import { RESOURCES, RESOURCE_FOR_TERRAIN } from '../types';
 
 const SEATS = [
   { name: 'Alice', color: '#c1121f', isBot: false },
@@ -449,6 +450,104 @@ describe('knights', () => {
       state.board.landVertices[0],
     );
     expect(err).toMatch(/roads/i);
+  });
+});
+
+describe('the merchant', () => {
+  /** A player with one settlement and a merchant card in hand. */
+  const holding = (seed: string) => {
+    const state = ckGame(seed);
+    const draft: GameState = { ...state, phase: 'main', turn: 6 };
+    const owner = draft.players[0].id;
+
+    const hex = draft.board.hexes.find(
+      (h) => RESOURCE_FOR_TERRAIN[h.terrain] !== undefined,
+    )!;
+    const vertex = hexVertices(hex.coord)[0];
+    draft.settlements = [{ vertex, owner, kind: 'settlement' }];
+    draft.players[0].progressCards = [
+      { id: 'm1', deck: 'trade', kind: 'merchant' },
+    ];
+
+    return { draft, owner, hex, resource: RESOURCE_FOR_TERRAIN[hex.terrain]! };
+  };
+
+  const play = (draft: GameState, owner: string, hex: { q: number; r: number }) =>
+    applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'm1',
+      choice: { kind: 'pick_hex', hex },
+      playerId: owner,
+    });
+
+  it('goes on a hex the player borders', () => {
+    const { draft, owner, hex } = holding('merchant-place');
+    const result = play(draft, owner, hex.coord);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.merchant).toEqual({ owner, hex: hex.coord });
+  });
+
+  it('refuses a hex the player does not border', () => {
+    const { draft, owner, hex } = holding('merchant-far');
+    const far = draft.board.hexes.find(
+      (h) =>
+        RESOURCE_FOR_TERRAIN[h.terrain] !== undefined &&
+        !hexVertices(h.coord).includes(draft.settlements[0].vertex),
+    )!;
+    expect(far.coord).not.toEqual(hex.coord);
+
+    const result = play(draft, owner, far.coord);
+    expect(result.ok).toBe(false);
+  });
+
+  it('trades its own hex two for one, and nothing else', () => {
+    const { draft, owner, hex, resource } = holding('merchant-rate');
+    const result = play(draft, owner, hex.coord);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const ratios = tradeRatios(result.state, owner);
+    expect(ratios[resource]).toBe(2);
+    for (const other of RESOURCES) {
+      if (other !== resource) expect(ratios[other]).toBe(4);
+    }
+    // And only for the holder.
+    expect(tradeRatios(result.state, draft.players[1].id)[resource]).toBe(4);
+  });
+
+  it('is worth a victory point while it is held', () => {
+    const { draft, owner, hex } = holding('merchant-point');
+    const before = computeScores(draft, [citiesKnightsRules])[owner].publicPoints;
+    const result = play(draft, owner, hex.coord);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const after = computeScores(result.state, [citiesKnightsRules])[owner]
+      .publicPoints;
+    expect(after).toBe(before + 1);
+  });
+
+  it('is offered as a hex to choose, not a resource to take', () => {
+    const { draft, owner } = holding('merchant-legal');
+    const plays = allLegalActions(draft, owner).filter(
+      (a) => a.type === 'play_progress_card' && a.cardId === 'm1',
+    );
+    expect(plays.length).toBeGreaterThan(0);
+    expect(
+      plays.every(
+        (a) => a.type === 'play_progress_card' && a.choice?.kind === 'pick_hex',
+      ),
+    ).toBe(true);
+  });
+
+  it('is not offered at all with nowhere to put it', () => {
+    const { draft, owner } = holding('merchant-homeless');
+    draft.settlements = [];
+    const plays = allLegalActions(draft, owner).filter(
+      (a) => a.type === 'play_progress_card' && a.cardId === 'm1',
+    );
+    expect(plays).toEqual([]);
   });
 });
 

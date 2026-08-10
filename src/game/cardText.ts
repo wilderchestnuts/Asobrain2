@@ -29,7 +29,8 @@ export const PROGRESS_CARD_TEXT: Record<ProgressCardKind, CardText> = {
   },
   merchant: {
     title: 'Merchant',
-    detail: 'Take one resource of your choice from the bank.',
+    detail:
+      'Place the merchant on a resource hex next to one of your buildings. While it sits there you trade that resource two for one, and it is worth a victory point. Another player can take it from you by playing their own.',
   },
   merchant_fleet: {
     title: 'Merchant Fleet',

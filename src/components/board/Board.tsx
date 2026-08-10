@@ -39,6 +39,7 @@ import { useBoardGestures, type ViewTransform } from '@/lib/useBoardGestures';
 
 import { EdgeSpot } from './EdgeSpot';
 import { Hex } from './Hex';
+import { Merchant } from './Merchant';
 import { NumberToken } from './NumberToken';
 import { Building, EdgePiece, KnightPiece } from './Piece';
 import { Pirate } from './Pirate';
@@ -57,6 +58,8 @@ export interface BoardProps {
   settlements?: readonly Settlement[];
   roads?: readonly RoadPiece[];
   knights?: readonly Knight[];
+  /** Cities & Knights: who holds the merchant, and the hex it sits on. */
+  merchant?: { owner: string; hex: { q: number; r: number } };
   players?: readonly { id: string; color?: string }[];
 
   /** Vertices the current player may build on right now. */
@@ -73,8 +76,10 @@ export interface BoardProps {
   onEdgeTap?: (edge: EdgeId) => void;
   onHexTap?: (coord: { q: number; r: number }) => void;
 
-  /** Hexes the player may move the robber or pirate to. */
+  /** Hexes the player may move the robber, pirate or merchant to. */
   highlightHexes?: readonly { q: number; r: number }[];
+  /** What tapping one of those hexes would do, for the hit target's label. */
+  hexLabel?: string;
   /** Cities & Knights: how far the barbarians have come, 0..attacksAt. */
   barbarianPosition?: number;
   barbarianAttacksAt?: number;
@@ -98,10 +103,12 @@ export function Board({
   settlements = [],
   roads = [],
   knights = [],
+  merchant,
   players,
   highlightVertices = [],
   highlightEdges = [],
   highlightHexes = [],
+  hexLabel = 'Move the robber here',
   edgeGhost = 'road',
   vertexGhost = 'settlement',
   onVertexTap,
@@ -257,6 +264,7 @@ export function Board({
 
   const robberPt = hexToPixel(board.robber, HEX_SIZE);
   const piratePt = board.pirate ? hexToPixel(board.pirate, HEX_SIZE) : null;
+  const merchantPt = merchant ? hexToPixel(merchant.hex, HEX_SIZE) : null;
 
   return (
     <div
@@ -381,10 +389,18 @@ export function Board({
             />
           )}
 
-          {/* --- robber and pirate --- */}
+          {/* --- robber, pirate and merchant --- */}
           <Robber x={robberPt.x} y={robberPt.y} size={HEX_SIZE} />
           {piratePt && (
             <Pirate x={piratePt.x} y={piratePt.y} size={HEX_SIZE} />
+          )}
+          {merchantPt && merchant && (
+            <Merchant
+              x={merchantPt.x + HEX_SIZE * 0.34}
+              y={merchantPt.y + HEX_SIZE * 0.1}
+              size={HEX_SIZE * 0.62}
+              style={styleFor(merchant.owner)}
+            />
           )}
 
           {/* --- ghost preview of the pending selection --- */}
@@ -461,7 +477,7 @@ export function Board({
                 y={p.y}
                 size={HEX_SIZE}
                 pending={pending?.kind === 'hex' && pending.id === key}
-                label="Move the robber here"
+                label={hexLabel}
               />
             );
           })}

@@ -25,11 +25,18 @@ import type { ActionResult, GameAction } from '../actions';
 import { fail } from '../actions';
 import type { Ctx, RulesModule } from '../engine';
 import type { VertexId } from '../hex';
-import { adjacentVertices, hexKey, vertexEdges, vertexHexes } from '../hex';
+import {
+  adjacentVertices,
+  hexEquals,
+  hexKey,
+  vertexEdges,
+  vertexHexes,
+} from '../hex';
 import { add, canAfford, count, subtract, totalCards } from '../hand';
 import {
   bankStock,
   isCurrentPlayer,
+  legalMerchantHexes,
   playerById,
   settlementAt,
   touchesOwnNetwork,
@@ -665,12 +672,28 @@ function playProgressCard(
 
   switch (card.kind) {
     // --- trade ---
-    case 'merchant_fleet':
-    case 'commercial_harbor':
     case 'merchant': {
-      // These three are trade modifiers whose effect is a better rate for the
-      // rest of the turn. Modelled as an immediate one-off gain rather than a
-      // lingering modifier, which keeps the state machine simple.
+      // The merchant is a piece, not a one-off gift. It sits on a hex you
+      // border, trades that resource two for one while you hold it, and is
+      // worth a point — and the next player to play the card takes it off you.
+      if (choice?.kind !== 'pick_hex') return fail('choose a hex');
+      const allowed = legalMerchantHexes(draft, actor.id);
+      if (!allowed.some((h) => hexEquals(h, choice.hex))) {
+        return fail('the merchant must sit on a resource hex you border');
+      }
+      draft.merchant = { owner: actor.id, hex: choice.hex };
+      spend();
+      const terrain = draft.board.hexes.find((h) => hexEquals(h.coord, choice.hex))
+        ?.terrain;
+      logLine(draft, ctx, actor.id, `sent the merchant to the ${terrain}`);
+      return ok(draft);
+    }
+
+    case 'merchant_fleet':
+    case 'commercial_harbor': {
+      // Both are rate modifiers lasting the rest of the turn. Modelled as an
+      // immediate one-off gain rather than a lingering modifier, which keeps
+      // the state machine simple.
       const want = choice?.kind === 'pick_resources' ? choice.resources[0] : undefined;
       if (want && bankStock(draft, want) > 0) {
         actor.hand = add(actor.hand, { [want]: 1 });
@@ -990,6 +1013,8 @@ export const citiesKnightsRules: RulesModule = {
     }
     // Defender of Catan cards.
     points += state.defenderOfCatan?.[player.id] ?? 0;
+    // Holding the merchant is worth one, for as long as you hold it.
+    if (state.merchant?.owner === player.id) points += 1;
 
     return points;
   },
@@ -1120,6 +1145,11 @@ function progressPlays(
           choice: { kind: 'target_player' as const, playerId: p.id },
         }));
     case 'merchant':
+      // Somewhere to put it, or the card cannot be played at all.
+      return legalMerchantHexes(state, playerId).map((hex) => ({
+        ...me,
+        choice: { kind: 'pick_hex' as const, hex },
+      }));
     case 'merchant_fleet':
     case 'commercial_harbor':
       return RESOURCES.map((r) => ({

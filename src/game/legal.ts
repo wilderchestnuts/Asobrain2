@@ -129,12 +129,45 @@ export function portRatios(
 }
 
 /**
+ * Where the Cities & Knights merchant may be set down.
+ *
+ * A producing land hex touched by one of your own buildings. Gold is excluded
+ * along with sea, desert and fog: the merchant's whole effect is a two-for-one
+ * rate on *the hex's* resource, and a gold hex does not have one.
+ */
+export function legalMerchantHexes(
+  state: GameState,
+  playerId: PlayerId,
+): HexCoord[] {
+  const mine = new Set(
+    state.settlements.filter((s) => s.owner === playerId).map((s) => s.vertex),
+  );
+  if (mine.size === 0) return [];
+  return state.board.hexes
+    .filter(
+      (h) =>
+        RESOURCE_FOR_TERRAIN[h.terrain] !== undefined &&
+        hexVertices(h.coord).some((v) => mine.has(v)),
+    )
+    .map((h) => h.coord);
+}
+
+/** The resource the merchant's current hex trades at two for one, if any. */
+export function merchantResource(state: GameState): Resource | undefined {
+  if (!state.merchant) return undefined;
+  const hex = hexAt(state, state.merchant.hex);
+  return hex ? RESOURCE_FOR_TERRAIN[hex.terrain] : undefined;
+}
+
+/**
  * Exchange rate for everything tradeable, not just resources.
  *
  * Cities & Knights commodities can go to the bank like anything else, but no
  * port deals in them — so a commodity is 4:1, or 3:1 if you hold a generic
  * harbour. Refusing them outright, as this used to, left a player sitting on
  * unusable paper with no way to convert it.
+ *
+ * The merchant beats any of that on its own hex, for whoever holds it.
  */
 export function tradeRatios(
   state: GameState,
@@ -147,6 +180,11 @@ export function tradeRatios(
       port.vertices.some((v) => settlementAt(state, v)?.owner === playerId),
   );
   for (const c of COMMODITIES) ratios[c] = generic ? 3 : 4;
+
+  if (state.merchant?.owner === playerId) {
+    const resource = merchantResource(state);
+    if (resource) ratios[resource] = Math.min(ratios[resource], 2);
+  }
   return ratios;
 }
 
