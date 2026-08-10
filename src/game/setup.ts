@@ -7,7 +7,7 @@
  */
 
 import { buildProgressDecks } from './rules/citiesKnights';
-import { generateBoard } from './board';
+import { boardForOptions } from './scenarios';
 import { Rng } from './rng';
 import type {
   DevCard,
@@ -101,7 +101,11 @@ export function createGame(opts: CreateGameOptions): GameState {
   };
 
   const rng = new Rng(options.seed, 0);
-  const board = generateBoard(options, rng);
+  // Through the registry, not `generateBoard` directly: naming a scenario has
+  // to actually produce that scenario's map. Calling the generator here meant
+  // every game got the plain island no matter which map was chosen, and the
+  // presets were only ever exercised by their own tests.
+  const board = boardForOptions(options, rng);
 
   const players: Player[] = opts.players.map((seat, i) => {
     const player: Player = {

@@ -1416,10 +1416,18 @@ function WinnerOverlay({
     >
       <div style={{ ...panel, padding: 28, borderRadius: 18, textAlign: 'center' }}>
         <h2 style={{ fontSize: 26, fontWeight: 700, marginBottom: 8 }}>
-          {winner?.id === myPlayerId ? 'You win' : `${winner?.name} wins`}
+          {/* A game can end with nobody winning — resigning out of a game
+              against bots finishes it rather than crowning one of them. */}
+          {!winner
+            ? 'Game over'
+            : winner.id === myPlayerId
+              ? 'You win'
+              : `${winner.name} wins`}
         </h2>
         <p style={{ opacity: 0.8, marginBottom: 16 }}>
-          {winner?.victoryPoints ?? 0} + {winner?.hiddenPoints ?? 0} hidden points
+          {winner
+            ? `${winner.victoryPoints} + ${winner.hiddenPoints} hidden points`
+            : 'You resigned.'}
         </p>
         <a href="/">
           <Button tone="primary" wide>

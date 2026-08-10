@@ -281,3 +281,60 @@ describe('full games', () => {
     for (const t of totals) expect(t).toBeLessThanOrEqual(3);
   });
 });
+
+describe('resigning', () => {
+  const resign = (state: GameState, playerId: string) =>
+    applyAction({ ...state, phase: 'main', turn: 4 }, { type: 'resign', playerId });
+
+  it('ends the game when the last human walks away from the bots', () => {
+    const state = createGame({
+      players: [
+        { name: 'Alice', color: 'red' },
+        { name: 'Bot 1', color: 'blue', isBot: true },
+        { name: 'Bot 2', color: 'purple', isBot: true },
+      ],
+      options: { seed: 'solo-resign' },
+    });
+
+    const result = resign(state, state.players[0].id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Two bots are still seated, but there is nobody left to play against them.
+    expect(result.state.players.filter((p) => !p.resigned)).toHaveLength(2);
+    expect(result.state.phase).toBe('game_over');
+    // Nobody wins a game they were the only one still playing.
+    expect(result.state.winner).toBeUndefined();
+  });
+
+  it('keeps going while another human is still in', () => {
+    const state = createGame({
+      players: [
+        { name: 'Alice', color: 'red' },
+        { name: 'Bob', color: 'blue' },
+        { name: 'Bot', color: 'purple', isBot: true },
+      ],
+      options: { seed: 'two-humans' },
+    });
+
+    const result = resign(state, state.players[0].id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.phase).not.toBe('game_over');
+  });
+
+  it('hands the win to the last player standing in a two-hander', () => {
+    const state = createGame({
+      players: [
+        { name: 'Alice', color: 'red' },
+        { name: 'Bob', color: 'blue' },
+      ],
+      options: { seed: 'head-to-head' },
+    });
+
+    const result = resign(state, state.players[0].id);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.phase).toBe('game_over');
+    expect(result.state.winner).toBe(state.players[1].id);
+  });
+});

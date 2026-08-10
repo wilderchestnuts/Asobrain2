@@ -9,7 +9,7 @@
 
 import { assembleBoard, type Scenario } from '../board';
 import type { Terrain } from '../types';
-import { rows, row, SEAFARERS } from './common';
+import { islets, paint, ring, rows, row, SEAFARERS } from './common';
 import { shroud } from './goldenFog';
 
 // ---------------------------------------------------------------------------
@@ -19,25 +19,29 @@ import { shroud } from './goldenFog';
 /**
  * Six small islands and nothing else, so the very first road is a ship and
  * every expansion is a crossing. Landfall bonuses carry the scoring.
+ *
+ * Each is a 2×2 rhombus and every pair is at least two hexes apart, so no two
+ * can merge into one landmass — which they quietly did in the first version of
+ * this map, leaving five islands under a name that promised six.
  */
 const SIX = rows(
-  row(-3, -1, 'fp'),
-  row(-2, -2, 'hg'),
+  row(-4, -1, 'fp'),
+  row(-3, -1, 'hg'),
 
-  row(-3, 2, 'gm'),
-  row(-2, 2, 'pf'),
+  row(-4, 3, 'gm'),
+  row(-3, 3, 'op'),
 
   row(0, -4, 'pd'),
-  row(1, -4, 'gf'),
+  row(1, -4, 'fg'),
 
-  row(0, 2, 'fh'),
-  row(1, 2, 'mp'),
+  row(0, 3, 'mh'),
+  row(1, 3, 'of'),
 
-  row(3, -2, 'go'),
-  row(4, -2, 'hp'),
+  row(4, -3, 'hg'),
+  row(5, -3, 'pm'),
 
-  row(3, 1, 'mg'),
-  row(4, 0, 'pf'),
+  row(4, 1, 'of'),
+  row(5, 1, 'gh'),
 );
 
 export const sixIslands: Scenario = {
@@ -51,7 +55,7 @@ export const sixIslands: Scenario = {
   expansions: SEAFARERS,
   islandBonus: { 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2 },
   build: (rng) =>
-    assembleBoard(SIX, rng, { seaMargin: 2, ports: 10, seafarers: true }),
+    assembleBoard(SIX, rng, { seaMargin: 1, ports: 10, seafarers: true }),
 };
 
 // ---------------------------------------------------------------------------
@@ -59,37 +63,38 @@ export const sixIslands: Scenario = {
 // ---------------------------------------------------------------------------
 
 /**
- * A crescent of small islands with a wider foot. Expansion runs along the
- * chain rather than outward in all directions, so players meet each other
- * head-on instead of quietly filling separate corners.
+ * Five three-hex islets strung around most of a wide ring, leaving the sixth
+ * position open — a crescent with a mouth rather than a closed atoll.
+ *
+ * Expansion runs *along* the chain rather than outward in all directions, so
+ * players meet head-on instead of quietly filling separate corners, and every
+ * link has to be sailed to. Laid out by ring index because the first version
+ * of this was written out by hand and quietly fused into one fifteen-hex arc:
+ * a chain in name only.
  */
+const LINKS = islets(4, 6, 3).slice(0, 5);
+
 const CHAIN = rows(
-  row(-3, 1, 'fp'),
-  row(-2, 0, 'gh'),
-  row(-1, -1, 'mf'),
-  row(0, -2, 'pg'),
-  row(1, -3, 'hd'),
-  row(2, -4, 'gp'),
-  row(3, -4, 'mh'),
-  row(4, -5, 'fg'),
+  paint(LINKS[0], 'fpg'),
+  paint(LINKS[1], 'hdg'),
+  paint(LINKS[2], 'mfp'),
+  paint(LINKS[3], 'gph'),
+  paint(LINKS[4], 'hgm'),
 );
 
-/** Two gold islets in fog, off the outside of the curve. */
-const CHAIN_FOG = [
-  { q: 2, r: -1 },
-  { q: 3, r: -1 },
-  { q: -1, r: 2 },
-  { q: 0, r: 2 },
-  { q: 4, r: -3 },
-  { q: -3, r: 3 },
-];
+/**
+ * The lagoon inside the ring is fogged, so the shortest way across the map is
+ * also the one nobody can see into. Alternating positions, so no two fog hexes
+ * touch and each has to be reached on its own.
+ */
+const CHAIN_FOG = ring(2).filter((_, i) => i % 2 === 0);
 
 const CHAIN_STACK: Terrain[] = [
   'gold',
   'gold',
+  'gold',
   'fields',
   'forest',
-  'sea',
   'sea',
 ];
 
@@ -97,7 +102,7 @@ export const longChain: Scenario = {
   id: 'long-chain',
   name: 'The Long Chain',
   description:
-    'A crescent of islets, with gold hidden in the fog off the outer edge. Everyone expands along the same arc, so the good spots are contested.',
+    'Five islets strung around an open crescent, with a fogged lagoon in the middle of it. Everyone expands along the same arc, so the good spots are contested — and the gold is in the water nobody can see into.',
   minPlayers: 2,
   maxPlayers: 4,
   victoryPointsToWin: 13,
@@ -105,7 +110,7 @@ export const longChain: Scenario = {
   islandBonus: { 1: 2, 2: 2, 3: 2, 4: 2 },
   build: (rng) =>
     assembleBoard([...CHAIN, ...shroud(CHAIN_FOG, CHAIN_STACK, rng)], rng, {
-      seaMargin: 2,
+      seaMargin: 1,
       ports: 9,
       seafarers: true,
     }),

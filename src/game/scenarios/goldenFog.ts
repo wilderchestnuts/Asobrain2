@@ -21,16 +21,21 @@ import type { Rng } from '../rng';
 import type { Terrain } from '../types';
 import { rows, row, SEAFARERS } from './common';
 
-/** A tight home island: enough to start, nowhere near enough to win. */
+/**
+ * The home island: a real place to start, but two hexes short of a classic
+ * board and with no gold on it at all. Everything worth sailing for is out in
+ * the mist.
+ */
 const HOME = rows(
-  row(-1, 0, 'fpg'),
-  row(0, -2, 'fhdg'),
-  row(1, -1, 'mph'),
-  row(2, -2, 'gp'),
+  row(-2, 0, 'fp'),
+  row(-1, -1, 'gmph'),
+  row(0, -2, 'fhdgp'),
+  row(1, -2, 'mgfh'),
+  row(2, -2, 'pg'),
 );
 
 /**
- * Four fog banks, one off each shoulder, sitting two rings out.
+ * Four fog banks, one off each shoulder, out at the fourth ring.
  *
  * The open water between them and the shore is not decoration: ports need a
  * stretch of real coast to sit on, and with the fog pressed against the island
@@ -38,38 +43,47 @@ const HOME = rows(
  */
 const FOG: { q: number; r: number }[] = [
   // north
-  { q: 0, r: -3 },
-  { q: 1, r: -3 },
-  { q: 2, r: -3 },
+  { q: 0, r: -4 },
+  { q: 1, r: -4 },
+  { q: 2, r: -4 },
+  { q: 3, r: -4 },
   // east
-  { q: 3, r: -2 },
-  { q: 3, r: -1 },
-  { q: 3, r: 0 },
+  { q: 4, r: -3 },
+  { q: 4, r: -2 },
+  { q: 4, r: -1 },
+  { q: 4, r: 0 },
   // south
-  { q: 0, r: 3 },
-  { q: -1, r: 3 },
-  { q: -2, r: 3 },
+  { q: 0, r: 4 },
+  { q: -1, r: 4 },
+  { q: -2, r: 4 },
+  { q: -3, r: 4 },
   // west
-  { q: -3, r: 0 },
-  { q: -3, r: 1 },
-  { q: -3, r: 2 },
+  { q: -4, r: 0 },
+  { q: -4, r: 1 },
+  { q: -4, r: 2 },
+  { q: -4, r: 3 },
 ];
 
 /**
- * What the fog hides. A third of it is gold, so opening a bank is usually
- * worth the ships — but a quarter is just more ocean, so it is never a
- * certainty. Shuffled per game, so no two runs reward the same direction.
+ * What the fog hides — five gold in sixteen, which is far more gold than a box
+ * contains and exactly the point of the map. A quarter of it is open ocean, so
+ * a bank is never a sure thing, and the stack is shuffled per game, so no two
+ * runs reward the same direction.
  */
 const FOG_STACK: Terrain[] = [
   'gold',
   'gold',
   'gold',
   'gold',
+  'gold',
+  'forest',
   'forest',
   'pasture',
   'fields',
+  'fields',
   'hills',
   'mountains',
+  'sea',
   'sea',
   'sea',
   'sea',
@@ -102,7 +116,7 @@ export const goldenFog: Scenario = {
   islandBonus: { 1: 2, 2: 2, 3: 2, 4: 2, 5: 2 },
   build: (rng) =>
     assembleBoard([...HOME, ...shroud(FOG, FOG_STACK, rng)], rng, {
-      seaMargin: 2,
+      seaMargin: 1,
       ports: 9,
       seafarers: true,
     }),

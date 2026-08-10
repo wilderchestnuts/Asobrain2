@@ -276,7 +276,7 @@ describe('full seafarers games', () => {
     });
   }
 
-  it('plays every naval scenario without stalling', { timeout: 120_000 }, () => {
+  it('plays every naval scenario without stalling', { timeout: 180_000 }, () => {
     for (const [id, scenario] of Object.entries(SCENARIOS)) {
       if (!scenario.expansions.seafarers) continue;
       const { state, steps } = playOut(seaGame(`scn-${id}`, id), id, 12000);
@@ -284,6 +284,15 @@ describe('full seafarers games', () => {
         ['game_over', 'roll', 'main'].includes(state.phase),
         `${id} ended in phase ${state.phase} after ${steps} steps`,
       ).toBe(true);
+
+      // Setup is where an exotic map fails: a board of small islands can leave
+      // a player with nowhere legal to put a second settlement, and the game
+      // never starts. Accepting "did not crash" would not notice.
+      expect(
+        state.settlements.length,
+        `${id} never finished setup — ${state.settlements.length} settlements after ${steps} steps`,
+      ).toBeGreaterThanOrEqual(SEATS.length * 2);
+      expect(state.pending, `${id} left an unanswered obligation`).toEqual([]);
     }
   });
 });

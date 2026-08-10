@@ -28,6 +28,7 @@ import {
 } from './hex';
 import { Rng } from './rng';
 import { SCENARIOS, boardForOptions, getScenario } from './scenarios';
+import { createGame } from './setup';
 import type { Board, GameOptions, Hex } from './types';
 import { PRODUCING_TERRAINS } from './types';
 
@@ -624,6 +625,35 @@ describe('scenarios', () => {
     ]);
   });
 
+  /**
+   * A map's silhouette is the thing that makes it that map, and it is exactly
+   * what a hand-written coordinate list gets wrong invisibly: "Six Islands"
+   * shipped with five, two of its islets having quietly fused, and "The Long
+   * Chain" was a single unbroken arc. Both looked fine in a preview.
+   */
+  it.each([
+    ['six-islands', [4, 4, 4, 4, 4, 4]],
+    ['long-chain', [3, 3, 3, 3, 3]],
+    ['split-continent', [16, 14]],
+    ['golden-fog', [17]],
+  ] as const)('%s keeps its shape', (id, shape) => {
+    for (const seed of ['shape-a', 'shape-b']) {
+      const board = SCENARIOS[id].build(new Rng(seed));
+      expect(components(board.hexes, (h) => isLandTerrain(h.terrain))).toEqual([
+        ...shape,
+      ]);
+    }
+  });
+
+  it('hides most of the gold on golden fog, and none of it at home', () => {
+    const board = SCENARIOS['golden-fog'].build(new Rng('golden'));
+    // Nothing on the home island is worth staying for.
+    expect(board.hexes.filter((h) => h.terrain === 'gold')).toHaveLength(0);
+    expect(
+      board.hexes.filter((h) => h.hidden?.terrain === 'gold').length,
+    ).toBeGreaterThanOrEqual(4);
+  });
+
   it('picks the board for a game from its options', () => {
     expect(boardForOptions(options(), new Rng('opts'))).toEqual(
       generateBoard(options(), new Rng('opts')),
@@ -635,5 +665,43 @@ describe('scenarios', () => {
     expect(
       boardForOptions(options({ scenario: 'nonsense' }), new Rng('opts')).hexes,
     ).toHaveLength(37);
+  });
+
+  /**
+   * `boardForOptions` was right all along; nothing called it. `createGame`
+   * reached for the generator directly, so naming a map picked its name and
+   * nothing else, and every game — however exotic the choice — dealt the plain
+   * island. Testing the registry alone could never have caught that: the
+   * assertion has to start where a real game starts.
+   */
+  it.each(Object.keys(SCENARIOS))('deals the %s map to a real game', (id) => {
+    const seed = `plays-${id}`;
+    const state = createGame({
+      players: [
+        { name: 'Alice', color: 'red' },
+        { name: 'Bob', color: 'blue' },
+      ],
+      options: { seed, scenario: id, expansions: { seafarers: true, citiesAndKnights: false } },
+    });
+    expect(state.board).toEqual(
+      boardForOptions(
+        options({ seed, scenario: id, expansions: { seafarers: true, citiesAndKnights: false } }),
+        new Rng(seed),
+      ),
+    );
+  });
+
+  it('does not deal the plain island to a scenario game', () => {
+    const distinct = createGame({
+      players: [
+        { name: 'Alice', color: 'red' },
+        { name: 'Bob', color: 'blue' },
+      ],
+      options: { seed: 'six', scenario: 'six-islands' },
+    });
+    // Six separate islets, which the 19-hex generator cannot produce.
+    expect(
+      components(distinct.board.hexes, (h) => isLandTerrain(h.terrain)),
+    ).toHaveLength(6);
   });
 });

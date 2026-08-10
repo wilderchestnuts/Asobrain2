@@ -810,6 +810,14 @@ function handle(
         if (remaining[0]) draft.winner = remaining[0].id;
         return ok(draft);
       }
+      // Bots left to themselves is a screensaver, not a game. Once the last
+      // person has walked away the game is finished, however many seats are
+      // still nominally occupied — and nobody wins a game they were the only
+      // one still playing.
+      if (remaining.every((p) => p.isBot)) {
+        draft.phase = 'game_over';
+        return ok(draft);
+      }
       if (isCurrentPlayer(draft, actor.id)) advanceTurn(draft, ctx);
       return ok(draft);
     }
