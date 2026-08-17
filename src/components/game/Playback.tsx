@@ -49,7 +49,7 @@ const PIPS: Record<number, [number, number][]> = {
   ],
 };
 
-function Die({
+export function Die({
   value,
   tint,
   ink = '#1B2430',
@@ -90,7 +90,7 @@ function Die({
  * the other three name a progress deck, so it is drawn in the deck's colour
  * rather than as another number.
  */
-function EventDie({ face, size = 46 }: { face: string; size?: number }) {
+export function EventDie({ face, size = 46 }: { face: string; size?: number }) {
   const isBarbarian = face === 'barbarian';
   const fill = isBarbarian
     ? '#2B2B2B'
@@ -114,6 +114,47 @@ function EventDie({ face, size = 46 }: { face: string; size?: number }) {
         <circle cx={23} cy={23} r={9} fill="#fff" opacity={0.9} />
       )}
     </svg>
+  );
+}
+
+/**
+ * The three dice as they were actually thrown, labelled.
+ *
+ * A single total told you the production number and nothing else, but two of
+ * the three dice carry information a player has to act on: the red die is what
+ * your improvement level is measured against for a progress card, and the
+ * event die decides whether the barbarians moved. Showing "9" told you neither.
+ */
+export function DiceTray({
+  roll,
+  size = 34,
+  showTotal = true,
+}: {
+  roll: { white: number; red: number; event?: string };
+  size?: number;
+  showTotal?: boolean;
+}) {
+  const label =
+    roll.event === 'barbarian'
+      ? 'the barbarians advanced'
+      : roll.event
+        ? `${roll.event} card die`
+        : undefined;
+
+  return (
+    <span
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+      title={label}
+    >
+      <Die value={roll.white} tint="#F4F1EA" size={size} />
+      <Die value={roll.red} tint="#C0392B" ink="#FFF3EF" size={size} />
+      {roll.event && <EventDie face={roll.event} size={size} />}
+      {showTotal && (
+        <strong style={{ fontSize: size * 0.52, marginLeft: 2 }}>
+          {roll.white + roll.red}
+        </strong>
+      )}
+    </span>
   );
 }
 

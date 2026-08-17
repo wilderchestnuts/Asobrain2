@@ -84,6 +84,40 @@ export function Emblem({
 // Vertex pieces
 // ---------------------------------------------------------------------------
 
+/**
+ * A city wall: brown masonry with a lit cap and a shaded face.
+ *
+ * It used to be drawn in the number-token cream, flat, which read as a stray
+ * token rather than stonework — and with a city drawn on top of it in the
+ * player's colour there was nothing to say the wall was there at all. Three
+ * bands of one brown do the work: the top edge catches the light, the body
+ * sits mid-tone, and a dark foot separates it from the hex beneath.
+ */
+function CityWall() {
+  const CRENELLATION = 'M-40 22 v-13 h7 v6 h7 v-6 h7 v6 h7 v-6 h7 v6 h7 v-6 h7 v13 z';
+  return (
+    <g>
+      {/* shadow on the ground, so the wall sits on the hex rather than floating */}
+      <ellipse cx={0} cy={23} rx={41} ry={5} fill="rgba(0,0,0,.22)" />
+      <path
+        d={CRENELLATION}
+        fill={surface('wall')}
+        stroke={surface('wall-shade')}
+        strokeWidth={3}
+        strokeLinejoin="round"
+      />
+      {/* the lit top of every merlon and of the curtain between them */}
+      <path
+        d="M-40 9 h7 v3 h-7 z M-26 9 h7 v3 h-7 z M-12 9 h7 v3 h-7 z M2 9 h7 v3 h-7 z M16 9 h7 v3 h-7 z M30 9 h7 v3 h-7 z"
+        fill={surface('wall-lit')}
+      />
+      <path d="M-33 15 h66 v3 h-66 z" fill={surface('wall-lit')} opacity={0.5} />
+      {/* shaded foot */}
+      <path d="M-40 18 h80 v4 h-80 z" fill={surface('wall-shade')} opacity={0.55} />
+    </g>
+  );
+}
+
 export interface BuildingProps extends PieceStyleProps {
   x: number;
   y: number;
@@ -111,15 +145,7 @@ export function Building({
   const city = kind === 'city';
   return (
     <g transform={`translate(${x} ${y}) scale(${s})`} {...ghostProps(ghost)}>
-      {wall && (
-        <path
-          d="M-40 22 v-13 h7 v6 h7 v-6 h7 v6 h7 v-6 h7 v6 h7 v-6 h7 v13 z"
-          fill={surface('token-bg')}
-          stroke={surface('token-edge')}
-          strokeWidth={3}
-          strokeLinejoin="round"
-        />
-      )}
+      {wall && <CityWall />}
       <path
         d={city ? CITY_PATH : SETTLEMENT_PATH}
         fill={style.base}

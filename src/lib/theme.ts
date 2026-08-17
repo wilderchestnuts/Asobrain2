@@ -65,6 +65,11 @@ export const SURFACE_COLORS = {
   'port-bg': { light: '#F7EDD5', dark: '#DCCFAE' },
   'port-ink': { light: '#3A2E12', dark: '#241C08' },
   blocked: { light: 'rgba(8,14,24,0.34)', dark: 'rgba(0,0,0,0.48)' },
+  // City walls are masonry, not another token: brown, and lit from above so the
+  // battlements read as solid under a city sitting on top of them.
+  wall: { light: '#8A5A33', dark: '#6E4526' },
+  'wall-lit': { light: '#B07A47', dark: '#8A5A33' },
+  'wall-shade': { light: '#5E3A1E', dark: '#3F2612' },
   robber: { light: '#1D1A17', dark: '#0B0A09' },
   'robber-rim': { light: '#F5F1E8', dark: '#B9B3A6' },
   highlight: { light: '#0E9A9A', dark: '#2AD3D3' },

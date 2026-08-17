@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { Board, type Pending } from '@/components/board/Board';
 import { KnightPiece } from '@/components/board/Piece';
-import { PlaybackOverlay } from '@/components/game/Playback';
+import { DiceTray, PlaybackOverlay } from '@/components/game/Playback';
 import { useTurnPlayback } from '@/hooks/useTurnPlayback';
 import {
   Button,
@@ -36,7 +36,8 @@ import { allLegalActions } from '@/game/reducer';
 import { ALL_TRADEABLES, count as handCount, totalCards } from '@/game/hand';
 import { discardCountFor } from '@/game/legal';
 import type { EdgeId, VertexId } from '@/game/hex';
-import { vertexHexes } from '@/game/hex';
+import { hexKey, parseHexKey, vertexHexes } from '@/game/hex';
+import { progressTargets, type ProgressTargets } from '@/game/rules/citiesKnights';
 import type { GameAction } from '@/game/actions';
 import type {
   GameState,
@@ -65,10 +66,47 @@ import {
 type BuildMode =
   | { kind: 'settlement' | 'city' | 'road' | 'ship' | 'knight' | 'wall' }
   | { kind: 'move_knight'; knightId: string }
-  | { kind: 'merchant'; cardId: string }
+  /**
+   * A progress card mid-play. The card is *not* played until every spot it
+   * asks for has been chosen and confirmed — Road Building wants two edges,
+   * Inventor two hexes — so the picks accumulate here and the action is only
+   * sent once the set is complete. Cancelling costs nothing; the card is still
+   * in hand.
+   */
+  | {
+      kind: 'progress';
+      cardId: string;
+      targets: ProgressTargets;
+      picked: string[];
+    }
   | null;
 
 type BuildKind = NonNullable<BuildMode>['kind'];
+
+/** How many spots this card still wants, and how many it wants in total. */
+function aimProgress(mode: Extract<NonNullable<BuildMode>, { kind: 'progress' }>) {
+  const total = 'count' in mode.targets ? mode.targets.count : 1;
+  return { total, done: mode.picked.length, remaining: total - mode.picked.length };
+}
+
+/**
+ * Turn the spots a player pointed at into the choice the rules expect. The
+ * shape depends on the card, which is why `progressTargets` names the kind.
+ */
+function progressChoice(
+  targets: ProgressTargets,
+  picked: string[],
+): NonNullable<Extract<GameAction, { type: 'play_progress_card' }>['choice']> | null {
+  if (targets.kind === 'hex') {
+    const hexes = picked.map(parseHexKey);
+    return targets.count === 2
+      ? { kind: 'pick_hexes', hexes }
+      : { kind: 'pick_hex', hex: hexes[0] };
+  }
+  if (targets.kind === 'edge') return { kind: 'pick_edges', edges: picked };
+  if (targets.kind === 'vertex') return { kind: 'pick_vertex', vertex: picked[0] };
+  return null;
+}
 
 /**
  * A left rail buys vertical space on a wide screen, where the board is
@@ -94,7 +132,9 @@ export function GameScreen({ game }: { game: UseGame }) {
 
   const [mode, setMode] = useState<BuildMode>(null);
   const [pending, setPending] = useState<Pending>(null);
-  const [sheet, setSheet] = useState<'trade' | 'cards' | 'log' | null>(null);
+  const [sheet, setSheet] = useState<
+    'trade' | 'cards' | 'progress' | 'log' | null
+  >(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [discard, setDiscard] = useState<Partial<Record<Tradeable, number>>>({});
   const wide = useWideLayout();
@@ -149,7 +189,28 @@ export function GameScreen({ game }: { game: UseGame }) {
   const highlightEdges = edgesFor(legal, mode);
   const highlightHexes = hexesFor(legal, mode, owed?.kind);
 
+  /**
+   * Record one spot for a progress card, and play it once the card has
+   * everything it asked for. Until then nothing is sent — the card stays in
+   * hand and cancelling is free.
+   */
+  const aimAt = (id: string) => {
+    if (mode?.kind !== 'progress') return;
+    const picked = [...mode.picked, id];
+    const { total } = aimProgress(mode);
+    if (picked.length < total) {
+      setMode({ ...mode, picked });
+      setPending(null);
+      return;
+    }
+    const choice = progressChoice(mode.targets, picked);
+    if (choice) {
+      void act({ type: 'play_progress_card', cardId: mode.cardId, choice });
+    }
+  };
+
   const onVertexTap = (vertex: VertexId) => {
+    if (mode?.kind === 'progress') return aimAt(vertex);
     const match = legal.find((a) =>
       mode?.kind === 'move_knight'
         ? matchesMode(a, mode) && a.type === 'move_knight' && a.to === vertex
@@ -161,6 +222,7 @@ export function GameScreen({ game }: { game: UseGame }) {
   };
 
   const onEdgeTap = (edge: EdgeId) => {
+    if (mode?.kind === 'progress') return aimAt(edge);
     const match = legal.find(
       (a) =>
         'edge' in a &&
@@ -171,22 +233,13 @@ export function GameScreen({ game }: { game: UseGame }) {
   };
 
   const onHexTap = (coord: { q: number; r: number }) => {
-    const match = legal.find((a) => {
-      if (mode?.kind === 'merchant') {
-        return (
-          matchesMode(a, mode) &&
-          a.type === 'play_progress_card' &&
-          a.choice?.kind === 'pick_hex' &&
-          a.choice.hex.q === coord.q &&
-          a.choice.hex.r === coord.r
-        );
-      }
-      return (
+    if (mode?.kind === 'progress') return aimAt(hexKey(coord));
+    const match = legal.find(
+      (a) =>
         (a.type === 'move_robber' || a.type === 'move_pirate') &&
         a.hex.q === coord.q &&
-        a.hex.r === coord.r
-      );
-    });
+        a.hex.r === coord.r,
+    );
     if (match) void act(stripId(match));
   };
 
@@ -235,9 +288,7 @@ export function GameScreen({ game }: { game: UseGame }) {
           highlightEdges={highlightEdges}
           highlightHexes={highlightHexes}
           hexLabel={
-            mode?.kind === 'merchant'
-              ? 'Send the merchant here'
-              : 'Move the robber here'
+            mode?.kind === 'progress' ? 'Choose this hex' : 'Move the robber here'
           }
           vertexGhost={vertexGhostFor(mode)}
           edgeGhost={edgeGhostFor(mode)}
@@ -353,6 +404,19 @@ export function GameScreen({ game }: { game: UseGame }) {
         me={me}
         legal={legal}
         onAct={act}
+      />
+
+      <ProgressSheet
+        open={sheet === 'progress'}
+        onClose={() => setSheet(null)}
+        state={state}
+        me={me}
+        legal={legal}
+        onAct={act}
+        onAim={(next) => {
+          setMode(next);
+          setSheet(null);
+        }}
       />
 
       <CardsSheet
@@ -547,7 +611,7 @@ function BottomBar({
   setMode: (m: BuildMode) => void;
   isMyTurn: boolean;
   onAct: (a: ClientAction) => void;
-  onOpen: (s: 'trade' | 'cards' | 'log') => void;
+  onOpen: (s: 'trade' | 'cards' | 'progress' | 'log') => void;
 }) {
   const has = (t: string) => legal.some((a) => a.type === t);
   const ck = state.options.expansions.citiesAndKnights;
@@ -589,13 +653,10 @@ function BottomBar({
                 minHeight: TAP,
                 display: 'flex',
                 alignItems: 'center',
-                padding: '0 12px',
-                fontSize: 15,
-                opacity: 0.85,
+                padding: '0 10px',
               }}
             >
-              🎲 {roll.white + roll.red}
-              {roll.event && ` · ${roll.event}`}
+              <DiceTray roll={roll} />
             </span>
           )}
           <Button onClick={() => onOpen('log')} tone="ghost">
@@ -632,13 +693,38 @@ function BottomBar({
           </Button>
         )}
 
+        {/* Progress cards get their own tab, with the count on it. Buried in
+            a shared sheet there was nothing to tell you a card had arrived. */}
+        {ck && (me?.progressCards?.length ?? 0) > 0 && (
+          <Button
+            tone={has('play_progress_card') ? 'primary' : 'default'}
+            onClick={() => onOpen('progress')}
+          >
+            Progress
+            <span
+              style={{
+                marginLeft: 6,
+                padding: '1px 7px',
+                borderRadius: 999,
+                fontSize: 13,
+                fontWeight: 700,
+                background: surface('highlight-ring'),
+                color: surface('board-bg'),
+              }}
+            >
+              {me!.progressCards!.length}
+            </span>
+          </Button>
+        )}
+
         {(has('buy_improvement') ||
-          has('play_progress_card') ||
           has('play_dev_card') ||
           has('activate_knight') ||
           has('promote_knight') ||
           has('move_knight')) && (
-          <Button onClick={() => onOpen('cards')}>Cards &amp; knights</Button>
+          <Button onClick={() => onOpen('cards')}>
+            {ck ? 'Knights' : 'Cards'}
+          </Button>
         )}
 
         {(has('bank_trade') ||
@@ -671,8 +757,8 @@ function BottomBar({
         <p style={{ fontSize: 13, opacity: 0.8 }}>
           {mode.kind === 'move_knight'
             ? 'Tap where the knight should go, then tap again to confirm.'
-            : mode.kind === 'merchant'
-              ? 'Tap the hex to send the merchant to, then tap again to confirm.'
+            : mode.kind === 'progress'
+              ? aimHint(mode)
               : 'Tap a highlighted spot, then tap it again to confirm.'}{' '}
           <button
             type="button"
@@ -1064,39 +1150,11 @@ function CardsSheet({
     onClose();
   };
 
-  /**
-   * The merchant wants a hex, so it goes to the board rather than being played
-   * from a list of thirty near-identical buttons. Everything else in this
-   * section already carries its own choice.
-   */
-  const merchantCards = new Set(
-    group('play_progress_card').flatMap((a) =>
-      a.type === 'play_progress_card' &&
-      me?.progressCards?.find((c) => c.id === a.cardId)?.kind === 'merchant'
-        ? [a.cardId]
-        : [],
-    ),
-  );
-
   const sections: Array<[string, GameAction[], (a: GameAction) => string]> = [
     [
       'City improvements',
       group('buy_improvement'),
       (a) => (a.type === 'buy_improvement' ? `Improve ${a.track}` : ''),
-    ],
-    [
-      'Progress cards',
-      group('play_progress_card')
-        .filter((a) => a.type === 'play_progress_card' && !merchantCards.has(a.cardId))
-        .slice(0, 30),
-      (a) =>
-        a.type === 'play_progress_card'
-          ? `${cardTitle(
-              me?.progressCards?.find((c) => c.id === a.cardId)?.kind ?? 'card',
-            )}${a.choice && 'resource' in a.choice ? ` — ${a.choice.resource}` : ''}${
-              a.choice && 'commodity' in a.choice ? ` — ${a.choice.commodity}` : ''
-            }`
-          : '',
     ],
     [
       'Development cards',
@@ -1112,50 +1170,7 @@ function CardsSheet({
   ];
 
   return (
-    <Sheet open={open} title="Cards & knights" onClose={onClose}>
-      {/* What is in hand, with what each card does — nobody remembers 24 of
-          them, and a bare name is no help at all. */}
-      {(me?.progressCards?.length ?? 0) > 0 && (
-        <section style={{ marginBottom: 16 }}>
-          <h3 style={{ fontWeight: 600, marginBottom: 8 }}>
-            Your progress cards
-          </h3>
-          <ul style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {me!.progressCards!.map((c) => (
-              <li
-                key={c.id}
-                style={{
-                  padding: '8px 10px',
-                  borderRadius: 10,
-                  border: `1px solid ${surface('chrome-edge')}`,
-                  borderLeft: `4px solid ${TRACK_COLORS[c.deck].light}`,
-                }}
-              >
-                <strong style={{ fontSize: 15 }}>{cardTitle(c.kind)}</strong>
-                <p style={{ fontSize: 13, opacity: 0.8, marginTop: 2 }}>
-                  {cardDetail(c.kind)}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {merchantCards.size > 0 && (
-        <section style={{ marginBottom: 16 }}>
-          <h3 style={{ fontWeight: 600, marginBottom: 8 }}>Merchant</h3>
-          {[...merchantCards].map((cardId) => (
-            <Button
-              key={cardId}
-              tone="primary"
-              onClick={() => onAim({ kind: 'merchant', cardId })}
-            >
-              Choose a hex on the board
-            </Button>
-          ))}
-        </section>
-      )}
-
+    <Sheet open={open} title="Knights & improvements" onClose={onClose}>
       <KnightRoster
         state={state}
         me={me}
@@ -1197,12 +1212,246 @@ function CardsSheet({
         ),
       )}
       {sections.every(([, a]) => a.length === 0) &&
-        merchantCards.size === 0 &&
         (state.knights ?? []).every((k) => k.owner !== me?.id) && (
           <p style={{ opacity: 0.7 }}>Nothing to play right now.</p>
         )}
     </Sheet>
   );
+}
+
+/**
+ * Progress cards, one panel each, with what the card does written on it.
+ *
+ * They used to be a flat run of buttons in a shared sheet — one per possible
+ * choice, so a single Resource Monopoly appeared five times over and a card
+ * that wanted a board location appeared once per legal target with no way to
+ * tell which was which. Worse, tapping any of them played the card
+ * immediately: there was no point at which you could see what was about to
+ * happen and back out.
+ *
+ * So: the card is the unit. Tap it, and it asks for what it needs — a
+ * resource, a player, or a spot on the board — and only then is it played.
+ */
+function ProgressSheet({
+  open,
+  onClose,
+  state,
+  me,
+  legal,
+  onAct,
+  onAim,
+}: {
+  open: boolean;
+  onClose: () => void;
+  state: GameState;
+  me: Player | null;
+  legal: GameAction[];
+  onAct: (a: ClientAction) => void;
+  onAim: (mode: BuildMode) => void;
+}) {
+  const [chosen, setChosen] = useState<string | null>(null);
+  const cards = me?.progressCards ?? [];
+
+  // Held cards that the rules will actually accept right now. A card with no
+  // legal target is still shown, greyed, with the reason implicit in its text.
+  const playable = new Set(
+    legal.flatMap((a) => (a.type === 'play_progress_card' ? [a.cardId] : [])),
+  );
+
+  const play = (cardId: string, choice?: GameAction extends never ? never : unknown) => {
+    onAct({
+      type: 'play_progress_card',
+      cardId,
+      ...(choice ? { choice } : {}),
+    } as ClientAction);
+    setChosen(null);
+    onClose();
+  };
+
+  return (
+    <Sheet open={open} title="Progress cards" onClose={onClose}>
+      {cards.length === 0 && (
+        <p style={{ opacity: 0.7 }}>
+          You hold none yet. They come from the event die, and you draw from a
+          deck more often the further you have taken that improvement track.
+        </p>
+      )}
+
+      <ul style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {cards.map((c) => {
+          const canPlay = playable.has(c.id);
+          const targets = me ? progressTargets(state, me.id, c) : { kind: 'none' as const };
+          const expanded = chosen === c.id;
+
+          return (
+            <li
+              key={c.id}
+              style={{
+                padding: '10px 12px',
+                borderRadius: 12,
+                border: `1px solid ${surface('chrome-edge')}`,
+                borderLeft: `5px solid ${TRACK_COLORS[c.deck].light}`,
+                opacity: canPlay ? 1 : 0.55,
+              }}
+            >
+              <strong style={{ fontSize: 16 }}>{cardTitle(c.kind)}</strong>
+              <p style={{ fontSize: 13, opacity: 0.85, margin: '3px 0 8px' }}>
+                {cardDetail(c.kind)}
+              </p>
+
+              {!canPlay && (
+                <p style={{ fontSize: 13, opacity: 0.75 }}>
+                  Nothing on the board for it right now.
+                </p>
+              )}
+
+              {canPlay && !expanded && (
+                <Button tone="primary" onClick={() => setChosen(c.id)}>
+                  {targets.kind === 'none' ? 'Play it' : 'Play it…'}
+                </Button>
+              )}
+
+              {canPlay && expanded && (
+                <ProgressChoices
+                  state={state}
+                  targets={targets}
+                  onPickBoard={() => {
+                    onAim({ kind: 'progress', cardId: c.id, targets, picked: [] });
+                    setChosen(null);
+                  }}
+                  onPickHere={(choice) => play(c.id, choice)}
+                  onCancel={() => setChosen(null)}
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Sheet>
+  );
+}
+
+/** The second step: what this particular card wants named. */
+function ProgressChoices({
+  state,
+  targets,
+  onPickBoard,
+  onPickHere,
+  onCancel,
+}: {
+  state: GameState;
+  targets: ProgressTargets;
+  onPickBoard: () => void;
+  onPickHere: (choice: unknown) => void;
+  onCancel: () => void;
+}) {
+  const row = (children: React.ReactNode) => (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+      {children}
+      <Button tone="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+    </div>
+  );
+
+  if (targets.kind === 'none') {
+    return row(
+      <Button tone="primary" onClick={() => onPickHere(undefined)}>
+        Confirm
+      </Button>,
+    );
+  }
+
+  if (targets.kind === 'resource') {
+    return row(
+      targets.options.map((r) => (
+        <Button
+          key={r}
+          onClick={() => onPickHere({ kind: 'pick_resources', resources: [r] })}
+        >
+          {CARD_LABEL[r]}
+        </Button>
+      )),
+    );
+  }
+
+  if (targets.kind === 'commodity') {
+    return row(
+      targets.options.map((c) => (
+        <Button
+          key={c}
+          onClick={() => onPickHere({ kind: 'trade_monopoly', commodity: c })}
+        >
+          {CARD_LABEL[c]}
+        </Button>
+      )),
+    );
+  }
+
+  if (targets.kind === 'player') {
+    return row(
+      targets.options.map((id) => (
+        <Button
+          key={id}
+          onClick={() => onPickHere({ kind: 'target_player', playerId: id })}
+        >
+          {state.players.find((p) => p.id === id)?.name ?? id}
+        </Button>
+      )),
+    );
+  }
+
+  if (targets.kind === 'knight') {
+    // Smith promotes two, so the buttons name the knights by where they stand.
+    return row(
+      targets.options.map((id) => {
+        const k = (state.knights ?? []).find((x) => x.id === id);
+        return (
+          <Button
+            key={id}
+            onClick={() =>
+              onPickHere({
+                kind: 'pick_knights',
+                knightIds: targets.options.slice(0, targets.count),
+              })
+            }
+          >
+            {k ? `Promote ${describeVertex(state, k.vertex)}` : id}
+          </Button>
+        );
+      }),
+    );
+  }
+
+  // Everything left is a spot on the map, so the board does the asking.
+  const noun =
+    targets.kind === 'hex' ? 'hex' : targets.kind === 'edge' ? 'road' : 'knight';
+  const count = 'count' in targets ? targets.count : 1;
+  return row(
+    <Button tone="primary" onClick={onPickBoard}>
+      {count > 1 ? `Choose ${count} ${noun}s on the board` : `Choose a ${noun} on the board`}
+    </Button>,
+  );
+}
+
+/**
+ * The hint under the action bar while a card is waiting on the board. It says
+ * which pick you are on, because Road Building asking twice in a row with no
+ * explanation is indistinguishable from a stuck screen.
+ */
+function aimHint(
+  mode: Extract<NonNullable<BuildMode>, { kind: 'progress' }>,
+): string {
+  const { total, done } = aimProgress(mode);
+  const what =
+    mode.targets.kind === 'hex'
+      ? 'hex'
+      : mode.targets.kind === 'edge'
+        ? 'spot'
+        : 'knight';
+  return total > 1
+    ? `Tap ${what} ${done + 1} of ${total}, then tap again to confirm.`
+    : `Tap the ${what}, then tap it again to confirm.`;
 }
 
 /**
@@ -1577,9 +1826,12 @@ function describePending(
   vertexGhost: 'settlement' | 'city' | 'knight',
   edgeGhost: 'road' | 'ship',
 ): string {
-  if (pending.kind === 'hex') {
-    return mode?.kind === 'merchant' ? 'Send the merchant here?' : 'Move here?';
+  if (mode?.kind === 'progress') {
+    const { total, done } = aimProgress(mode);
+    const of = total > 1 ? ` (${done + 1} of ${total})` : '';
+    return `Choose here${of}?`;
   }
+  if (pending.kind === 'hex') return 'Move here?';
   if (pending.kind === 'edge') return `Build a ${edgeGhost} here?`;
   if (mode?.kind === 'move_knight') return 'Move the knight here?';
   if (mode?.kind === 'wall') return 'Build a city wall here?';
@@ -1594,7 +1846,7 @@ const ACTION_TYPE: Record<BuildKind, string> = {
   knight: 'build_knight',
   wall: 'build_wall',
   move_knight: 'move_knight',
-  merchant: 'play_progress_card',
+  progress: 'play_progress_card',
 };
 
 const actionTypeFor = (mode: BuildMode): string =>
@@ -1606,7 +1858,7 @@ function matchesMode(a: GameAction, mode: NonNullable<BuildMode>): boolean {
   if (mode.kind === 'move_knight') {
     return a.type === 'move_knight' && a.knightId === mode.knightId;
   }
-  if (mode.kind === 'merchant') {
+  if (mode.kind === 'progress') {
     return a.type === 'play_progress_card' && a.cardId === mode.cardId;
   }
   return true;
@@ -1633,7 +1885,13 @@ function verticesFor(
       )
       .map((a) => a.to);
   }
-  if (mode?.kind === 'merchant') return [];
+  // A progress card asks for its own spots, which the rules name directly
+  // rather than the board guessing them from enumerated actions.
+  if (mode?.kind === 'progress') {
+    return mode.targets.kind === 'vertex'
+      ? mode.targets.options.filter((v) => !mode.picked.includes(v))
+      : [];
+  }
 
   const wanted = mode
     ? [actionTypeFor(mode)]
@@ -1654,6 +1912,11 @@ function verticesFor(
 }
 
 function edgesFor(legal: GameAction[], mode: BuildMode): EdgeId[] {
+  if (mode?.kind === 'progress') {
+    return mode.targets.kind === 'edge'
+      ? mode.targets.options.filter((e) => !mode.picked.includes(e))
+      : [];
+  }
   if (mode && mode.kind !== 'road' && mode.kind !== 'ship') return [];
   const wanted = mode ? [actionTypeFor(mode)] : ['build_road', 'build_ship'];
   const auto = !mode;
@@ -1672,16 +1935,12 @@ function hexesFor(
   mode: BuildMode,
   owedKind: string | undefined,
 ): { q: number; r: number }[] {
-  // Sending the merchant is a chosen action rather than something owed, so it
-  // takes precedence over — and cannot collide with — the robber's turn.
-  if (mode?.kind === 'merchant') {
-    return legal
-      .filter((a) => matchesMode(a, mode))
-      .flatMap((a) =>
-        a.type === 'play_progress_card' && a.choice?.kind === 'pick_hex'
-          ? [a.choice.hex]
-          : [],
-      );
+  // Playing a card is something the player chose to start, so it takes
+  // precedence over — and cannot collide with — the robber's turn.
+  if (mode?.kind === 'progress') {
+    return mode.targets.kind === 'hex'
+      ? mode.targets.options.filter((h) => !mode.picked.includes(hexKey(h)))
+      : [];
   }
   if (owedKind !== 'robber' && owedKind !== 'pirate') return [];
   return legal

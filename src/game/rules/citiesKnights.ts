@@ -24,7 +24,7 @@
 import type { ActionResult, GameAction } from '../actions';
 import { fail } from '../actions';
 import type { Ctx, RulesModule } from '../engine';
-import type { VertexId } from '../hex';
+import type { EdgeId, VertexId } from '../hex';
 import {
   adjacentVertices,
   hexEquals,
@@ -38,9 +38,11 @@ import {
   isCurrentPlayer,
   legalMerchantHexes,
   playerById,
+  roadError,
   settlementAt,
   touchesOwnNetwork,
 } from '../legal';
+import type { HexCoord } from '../hex';
 import type {
   Commodity,
   EventDie,
@@ -56,6 +58,7 @@ import type {
 } from '../types';
 import { COSTS, RESOURCES, TRACK_COMMODITY } from '../types';
 import { advancePhase, logLine, ok, PENDING_PHASE } from './base';
+import { updateAwards } from '../scoring';
 
 declare module '../types' {
   interface GameState {
@@ -781,7 +784,9 @@ function playProgressCard(
       const victim = playerById(draft, choice.playerId);
       const theirs = victim ? knightsOf(draft, victim.id) : [];
       if (theirs.length === 0) return fail('they have no knights');
-      const taken = theirs[0];
+      // Their best knight, not whichever happened to be first in the array —
+      // an arbitrary pick is both a worse card and impossible to explain.
+      const taken = theirs.reduce((a, b) => (b.rank > a.rank ? b : a));
       draft.knights = (draft.knights ?? []).filter((k) => k.id !== taken.id);
       const spot = draft.board.landVertices.find(
         (v) => knightPlacementError(draft, actor.id, v) === null,
@@ -798,7 +803,14 @@ function playProgressCard(
         });
       }
       spend();
-      logLine(draft, ctx, actor.id, 'played deserter');
+      logLine(
+        draft,
+        ctx,
+        actor.id,
+        spot
+          ? `played deserter — took a knight from ${victim!.name}`
+          : `played deserter — ${victim!.name} lost a knight, but there was nowhere to post it`,
+      );
       return ok(draft);
     }
 
@@ -891,12 +903,40 @@ function playProgressCard(
       return ok(draft);
     }
 
+    case 'smith': {
+      // Promote two knights, free. It used to pay out an ore instead, which is
+      // not the card — and left the player with nothing they could see happen.
+      if (choice?.kind !== 'pick_knights' || choice.knightIds.length === 0) {
+        return fail('choose which knights to promote');
+      }
+      if (choice.knightIds.length > 2) return fail('smith promotes two knights');
+      if (new Set(choice.knightIds).size !== choice.knightIds.length) {
+        return fail('that is the same knight twice');
+      }
+      const ceiling = maxRankFor(actor);
+      for (const id of choice.knightIds) {
+        const k = (draft.knights ?? []).find((x) => x.id === id);
+        if (!k || k.owner !== actor.id) return fail('that is not your knight');
+        if (k.rank >= ceiling) return fail('that knight cannot be promoted');
+        k.rank = (k.rank + 1) as KnightRank;
+      }
+      spend();
+      logLine(
+        draft,
+        ctx,
+        actor.id,
+        `played smith and promoted ${choice.knightIds.length} knight${
+          choice.knightIds.length === 1 ? '' : 's'
+        }`,
+      );
+      return ok(draft);
+    }
+
     // --- science ---
     case 'alchemist':
     case 'crane':
     case 'engineer':
     case 'medicine':
-    case 'smith':
     case 'irrigation':
     case 'mining': {
       // Build-discount and yield cards. Each pays out immediately in the
@@ -905,7 +945,6 @@ function playProgressCard(
       const payout: Partial<Record<string, Resource>> = {
         irrigation: 'grain',
         mining: 'ore',
-        smith: 'ore',
         medicine: 'brick',
         crane: 'lumber',
         engineer: 'ore',
@@ -921,33 +960,54 @@ function playProgressCard(
     }
 
     case 'inventor': {
-      if (choice?.kind !== 'pick_hex') return fail('choose a hex');
-      // Swap two number tokens: modelled as rotating this hex's number with
-      // another of the same rarity so board balance is preserved.
-      const a = draft.board.hexes.find(
-        (h) => hexKey(h.coord) === hexKey(choice.hex),
+      // The player names both hexes. Picking one and letting the engine choose
+      // its partner meant half the card's effect happened somewhere nobody was
+      // told about, on a hex nobody chose.
+      if (choice?.kind !== 'pick_hexes' || choice.hexes.length !== 2) {
+        return fail('choose two hexes to swap');
+      }
+      const [first, second] = choice.hexes.map((c) =>
+        draft.board.hexes.find((h) => hexKey(h.coord) === hexKey(c)),
       );
-      if (!a?.number) return fail('that hex has no number');
-      const b = draft.board.hexes.find(
-        (h) => h !== a && h.number !== undefined && h.number !== a.number,
-      );
-      if (b?.number) [a.number, b.number] = [b.number, a.number];
+      if (!first?.number || !second?.number) {
+        return fail('both hexes need a number token');
+      }
+      if (first === second) return fail('choose two different hexes');
+      const swapped = [first.number, second.number];
+      [first.number, second.number] = [swapped[1], swapped[0]];
       spend();
-      logLine(draft, ctx, actor.id, 'played inventor and swapped two numbers');
+      logLine(
+        draft,
+        ctx,
+        actor.id,
+        `played inventor and swapped the ${swapped[0]} and the ${swapped[1]}`,
+      );
       return ok(draft);
     }
 
     case 'road_building': {
-      if (choice?.kind !== 'pick_edges') return fail('choose two edges');
-      for (const edge of choice.edges.slice(0, 2)) {
-        if (draft.roads.some((r) => r.edge === edge)) continue;
-        if (!draft.board.roadEdges.includes(edge)) continue;
-        if (actor.supply.roads <= 0) break;
+      // Every edge goes through the ordinary road rules with the cost waived,
+      // exactly as the base game's card does. Without that check this card
+      // dropped roads on arbitrary board edges, connected to nothing.
+      if (choice?.kind !== 'pick_edges') return fail('choose where the roads go');
+      const allowed = Math.min(2, actor.supply.roads);
+      const edges = choice.edges;
+      if (edges.length < 1 || edges.length > allowed) {
+        return fail(`you may place ${allowed} road${allowed === 1 ? '' : 's'}`);
+      }
+      if (new Set(edges).size !== edges.length) return fail('those are the same edge');
+      for (const edge of edges) {
+        const problem = roadError(draft, actor.id, edge, {
+          free: true,
+          ignorePhase: true,
+        });
+        if (problem) return fail(problem);
         actor.supply.roads -= 1;
         draft.roads.push({ edge, owner: actor.id, kind: 'road' });
       }
+      updateAwards(draft);
       spend();
-      logLine(draft, ctx, actor.id, 'played road building');
+      logLine(draft, ctx, actor.id, `played road building for ${edges.length}`);
       return ok(draft);
     }
 
@@ -1106,6 +1166,116 @@ export const citiesKnightsRules: RulesModule = {
 };
 
 /** The concrete ways a given progress card can be played right now. */
+/**
+ * What a progress card is asking the player to point at.
+ *
+ * One source of truth for both sides of the screen: the board highlights these
+ * and the rules check against them, so the spots you are offered are exactly
+ * the spots that will be accepted. Several of these used to be enumerated
+ * straight into `legalActions` with an arbitrary `.slice(0, 8)` on the end,
+ * which quietly hid most of the board's legal targets from the player.
+ */
+export type ProgressTargets =
+  | { kind: 'none' }
+  | { kind: 'resource'; options: Resource[] }
+  | { kind: 'commodity'; options: Commodity[] }
+  | { kind: 'player'; options: PlayerId[] }
+  | { kind: 'hex'; options: HexCoord[]; count: 1 | 2 }
+  | { kind: 'edge'; options: EdgeId[]; count: 1 | 2 }
+  | { kind: 'vertex'; options: VertexId[] }
+  | { kind: 'knight'; options: string[]; count: 1 | 2 };
+
+export function progressTargets(
+  state: GameState,
+  playerId: PlayerId,
+  card: ProgressCard,
+): ProgressTargets {
+  const others = state.players.filter((p) => p.id !== playerId && !p.resigned);
+
+  switch (card.kind) {
+    case 'resource_monopoly':
+      return { kind: 'resource', options: [...RESOURCES] };
+    case 'merchant_fleet':
+    case 'commercial_harbor':
+      return { kind: 'resource', options: [...RESOURCES] };
+    case 'trade_monopoly':
+      return { kind: 'commodity', options: ['coin', 'paper', 'cloth'] };
+
+    case 'master_merchant':
+      return {
+        kind: 'player',
+        options: others.filter((p) => totalCards(p.hand) > 0).map((p) => p.id),
+      };
+    case 'spy':
+      return {
+        kind: 'player',
+        options: others
+          .filter((p) => (p.progressCards ?? []).length > 0)
+          .map((p) => p.id),
+      };
+    case 'deserter':
+      return {
+        kind: 'player',
+        options: others
+          .filter((p) => knightsOf(state, p.id).length > 0)
+          .map((p) => p.id),
+      };
+
+    case 'merchant':
+      return { kind: 'hex', options: legalMerchantHexes(state, playerId), count: 1 };
+    case 'inventor':
+      return {
+        kind: 'hex',
+        options: state.board.hexes
+          .filter((h) => h.number !== undefined)
+          .map((h) => h.coord),
+        count: 2,
+      };
+
+    case 'diplomat':
+      return {
+        kind: 'edge',
+        options: state.roads
+          .filter((r) => r.owner !== playerId && r.kind === 'road')
+          .map((r) => r.edge),
+        count: 1,
+      };
+    case 'road_building':
+      return {
+        kind: 'edge',
+        options: state.board.roadEdges.filter(
+          (e) =>
+            roadError(state, playerId, e, { free: true, ignorePhase: true }) ===
+            null,
+        ),
+        count: 2,
+      };
+
+    case 'intrigue':
+      return {
+        kind: 'vertex',
+        options: (state.knights ?? [])
+          .filter((k) => k.owner !== playerId)
+          .map((k) => k.vertex),
+      };
+
+    case 'smith': {
+      const p = playerById(state, playerId);
+      const ceiling = p ? maxRankFor(p) : 2;
+      return {
+        kind: 'knight',
+        options: knightsOf(state, playerId)
+          .filter((k) => k.rank < ceiling)
+          .map((k) => k.id),
+        count: 2,
+      };
+    }
+
+    default:
+      return { kind: 'none' };
+  }
+}
+
 function progressPlays(
   state: GameState,
   playerId: PlayerId,
@@ -1161,34 +1331,64 @@ function progressPlays(
         choice: { kind: 'pick_resources' as const, resources: [r] },
       }));
     case 'inventor': {
-      const numbered = state.board.hexes.filter((h) => h.number !== undefined);
-      return numbered
-        .slice(0, 8)
-        .map((h) => ({ ...me, choice: { kind: 'pick_hex' as const, hex: h.coord } }));
+      // Every ordered pair of numbered hexes is a legal swap, which is far too
+      // many to enumerate as actions. One representative play keeps the card
+      // playable by a bot; a human picks both hexes on the board.
+      const numbered = progressTargets(state, playerId, card);
+      if (numbered.kind !== 'hex' || numbered.options.length < 2) return [];
+      return [
+        {
+          ...me,
+          choice: {
+            kind: 'pick_hexes' as const,
+            hexes: [numbered.options[0], numbered.options[1]],
+          },
+        },
+      ];
     }
     case 'diplomat': {
-      const removable = state.roads
-        .filter((r) => r.owner !== playerId && r.kind === 'road')
-        .slice(0, 8);
-      return removable.map((r) => ({
+      const targets = progressTargets(state, playerId, card);
+      if (targets.kind !== 'edge') return [];
+      return targets.options.map((edge) => ({
         ...me,
-        choice: { kind: 'pick_edges' as const, edges: [r.edge] },
+        choice: { kind: 'pick_edges' as const, edges: [edge] },
       }));
     }
     case 'intrigue': {
-      const targets = (state.knights ?? []).filter((k) => k.owner !== playerId);
-      return targets.map((k) => ({
+      const targets = progressTargets(state, playerId, card);
+      if (targets.kind !== 'vertex') return [];
+      return targets.options.map((vertex) => ({
         ...me,
-        choice: { kind: 'pick_vertex' as const, vertex: k.vertex },
+        choice: { kind: 'pick_vertex' as const, vertex },
       }));
     }
+    case 'smith': {
+      const targets = progressTargets(state, playerId, card);
+      if (targets.kind !== 'knight' || targets.options.length === 0) return [];
+      return [
+        {
+          ...me,
+          choice: {
+            kind: 'pick_knights' as const,
+            knightIds: targets.options.slice(0, 2),
+          },
+        },
+      ];
+    }
     case 'road_building': {
-      const free = state.board.roadEdges
-        .filter((e) => !state.roads.some((r) => r.edge === e))
-        .slice(0, 6);
-      return free.length >= 2
-        ? [{ ...me, choice: { kind: 'pick_edges' as const, edges: free.slice(0, 2) } }]
-        : [];
+      const targets = progressTargets(state, playerId, card);
+      if (targets.kind !== 'edge' || targets.options.length === 0) return [];
+      // One concrete pair for the bots; a human lays them one at a time, and
+      // every edge is checked against the ordinary road rules either way.
+      return [
+        {
+          ...me,
+          choice: {
+            kind: 'pick_edges' as const,
+            edges: targets.options.slice(0, 2),
+          },
+        },
+      ];
     }
     default:
       return [{ ...me }];

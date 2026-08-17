@@ -82,6 +82,8 @@ export type ProgressCardChoice =
   | { kind: 'pick_edges'; edges: EdgeId[] }
   | { kind: 'pick_vertex'; vertex: VertexId }
   | { kind: 'pick_hex'; hex: HexCoord }
+  | { kind: 'pick_hexes'; hexes: HexCoord[] }
+  | { kind: 'pick_knights'; knightIds: string[] }
   | { kind: 'pick_card'; cardId: string }
   | { kind: 'pick_track'; track: ImprovementTrack };
 

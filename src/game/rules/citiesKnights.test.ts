@@ -12,9 +12,10 @@ import { createGame, defaultVictoryPoints } from '../setup';
 import { Rng } from '../rng';
 import { computeScores } from '../scoring';
 import { productionFor, tradeRatios } from '../legal';
-import { hexVertices } from '../hex';
+import { hexKey, hexVertices, vertexEdges } from '../hex';
 import {
   __internals,
+  progressTargets,
   BARBARIAN_ATTACK_AT,
   buildProgressDecks,
   citiesKnightsRules,
@@ -26,6 +27,7 @@ import {
 import type { GameAction } from '../actions';
 import type { GameState } from '../types';
 import { RESOURCES, RESOURCE_FOR_TERRAIN } from '../types';
+import { totalCards } from '../hand';
 
 const SEATS = [
   { name: 'Alice', color: '#c1121f', isBot: false },
@@ -654,6 +656,165 @@ describe('the merchant', () => {
       (a) => a.type === 'play_progress_card' && a.cardId === 'm1',
     );
     expect(plays).toEqual([]);
+  });
+});
+
+describe('progress cards', () => {
+  const holding = (seed: string, kind: string) => {
+    const state = ckGame(seed);
+    const draft: GameState = { ...state, phase: 'main', turn: 6 };
+    const owner = draft.players[0].id;
+    draft.players[0].progressCards = [
+      { id: 'c1', deck: 'science', kind: kind as never },
+    ];
+    return { draft, owner };
+  };
+
+  /**
+   * Road Building placed its two roads on arbitrary board edges, connected to
+   * nothing and nowhere near the player — the card enumerated the first two
+   * free edges on the map and the handler never checked connectivity.
+   */
+  it('will not build roads adrift of the network', () => {
+    const { draft, owner } = holding('rb-adrift', 'road_building');
+    const stranded = draft.board.roadEdges
+      .filter((e) => !draft.roads.some((r) => r.edge === e))
+      .slice(0, 2);
+
+    const result = applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'c1',
+      choice: { kind: 'pick_edges', edges: stranded },
+      playerId: owner,
+    });
+    expect(result.ok).toBe(false);
+    expect(draft.roads).toHaveLength(0);
+  });
+
+  it('only offers road building where a road could normally go', () => {
+    const { draft, owner } = holding('rb-legal', 'road_building');
+    // Give the player a settlement so they have a network to extend from.
+    const vertex = draft.board.landVertices[0];
+    draft.settlements = [{ vertex, owner, kind: 'settlement' }];
+
+    const targets = progressTargets(draft, owner, draft.players[0].progressCards![0]);
+    expect(targets.kind).toBe('edge');
+    if (targets.kind !== 'edge') return;
+    expect(targets.options.length).toBeGreaterThan(0);
+    for (const edge of targets.options) {
+      expect(vertexEdges(vertex).includes(edge) || draft.roads.length > 0).toBe(true);
+    }
+
+    const result = applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'c1',
+      choice: { kind: 'pick_edges', edges: targets.options.slice(0, 2) },
+      playerId: owner,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.roads).toHaveLength(2);
+    expect(result.state.roads.every((r) => r.owner === owner)).toBe(true);
+  });
+
+  /**
+   * Inventor let the player name one hex and picked the partner itself, so
+   * half the card's effect landed on a hex nobody chose and nobody was told
+   * about.
+   */
+  it('swaps the two hexes the player actually named', () => {
+    const { draft, owner } = holding('inventor', 'inventor');
+    const numbered = draft.board.hexes.filter((h) => h.number !== undefined);
+    const [a, b] = [numbered[0], numbered[3]];
+    const before = [a.number, b.number];
+    const untouched = numbered.filter((h) => h !== a && h !== b).map((h) => h.number);
+
+    const result = applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'c1',
+      choice: { kind: 'pick_hexes', hexes: [a.coord, b.coord] },
+      playerId: owner,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const after = result.state.board.hexes;
+    const a2 = after.find((h) => hexKey(h.coord) === hexKey(a.coord))!;
+    const b2 = after.find((h) => hexKey(h.coord) === hexKey(b.coord))!;
+    expect([a2.number, b2.number]).toEqual([before[1], before[0]]);
+    // And nothing else on the board moved.
+    expect(
+      after
+        .filter((h) => hexKey(h.coord) !== hexKey(a.coord) && hexKey(h.coord) !== hexKey(b.coord))
+        .filter((h) => h.number !== undefined)
+        .map((h) => h.number),
+    ).toEqual(untouched);
+  });
+
+  it('refuses inventor on one hex, or on the same hex twice', () => {
+    const { draft, owner } = holding('inventor-bad', 'inventor');
+    const hex = draft.board.hexes.find((h) => h.number !== undefined)!;
+    for (const hexes of [[hex.coord], [hex.coord, hex.coord]]) {
+      const result = applyAction(draft, {
+        type: 'play_progress_card',
+        cardId: 'c1',
+        choice: { kind: 'pick_hexes', hexes },
+        playerId: owner,
+      });
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  /** Smith promotes knights. It used to hand over an ore and call it done. */
+  it('promotes the knights smith was played on', () => {
+    const { draft, owner } = holding('smith', 'smith');
+    draft.knights = [
+      { id: 'k1', vertex: draft.board.landVertices[0], owner, rank: 1, active: false, usedThisTurn: false },
+      { id: 'k2', vertex: draft.board.landVertices[6], owner, rank: 1, active: false, usedThisTurn: false },
+    ];
+
+    const result = applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'c1',
+      choice: { kind: 'pick_knights', knightIds: ['k1', 'k2'] },
+      playerId: owner,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.state.knights!.map((k) => k.rank)).toEqual([2, 2]);
+    // No consolation ore.
+    expect(totalCards(result.state.players[0].hand)).toBe(0);
+  });
+
+  it('will not let smith promote past the politics ceiling', () => {
+    const { draft, owner } = holding('smith-cap', 'smith');
+    draft.knights = [
+      { id: 'k1', vertex: draft.board.landVertices[0], owner, rank: 2, active: false, usedThisTurn: false },
+    ];
+    draft.players[0].improvements = { trade: 0, politics: 0, science: 0 };
+
+    const result = applyAction(draft, {
+      type: 'play_progress_card',
+      cardId: 'c1',
+      choice: { kind: 'pick_knights', knightIds: ['k1'] },
+      playerId: owner,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  /**
+   * Several cards enumerated their targets with an arbitrary `.slice(0, 8)`,
+   * so most of the board's legal targets were simply never offered.
+   */
+  it('offers every legal target, not the first handful', () => {
+    const { draft, owner } = holding('no-slice', 'inventor');
+    const numbered = draft.board.hexes.filter((h) => h.number !== undefined);
+    expect(numbered.length).toBeGreaterThan(8);
+
+    const targets = progressTargets(draft, owner, draft.players[0].progressCards![0]);
+    expect(targets.kind).toBe('hex');
+    if (targets.kind !== 'hex') return;
+    expect(targets.options).toHaveLength(numbered.length);
   });
 });
 

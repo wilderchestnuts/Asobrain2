@@ -56,7 +56,8 @@ export const PROGRESS_CARD_TEXT: Record<ProgressCardKind, CardText> = {
   },
   deserter: {
     title: 'Deserter',
-    detail: 'Choose a player: one of their knights changes sides and joins you.',
+    detail:
+      'Choose a player. Their strongest knight leaves the board and joins you at the same rank.',
   },
   diplomat: {
     title: 'Diplomat',
@@ -100,7 +101,7 @@ export const PROGRESS_CARD_TEXT: Record<ProgressCardKind, CardText> = {
   },
   inventor: {
     title: 'Inventor',
-    detail: 'Swap the number tokens on two hexes.',
+    detail: 'Swap the number tokens on two hexes of your choosing.',
   },
   irrigation: {
     title: 'Irrigation',
@@ -120,11 +121,12 @@ export const PROGRESS_CARD_TEXT: Record<ProgressCardKind, CardText> = {
   },
   road_building: {
     title: 'Road Building',
-    detail: 'Build two roads for free.',
+    detail:
+      'Build two roads for free. They go where a road of yours could normally go.',
   },
   smith: {
     title: 'Smith',
-    detail: 'Take one ore from the bank, towards promoting a knight.',
+    detail: 'Promote two of your knights, free.',
   },
 };
 
