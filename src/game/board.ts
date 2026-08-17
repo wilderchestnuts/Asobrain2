@@ -494,14 +494,44 @@ export function assembleBoard(
     rng,
   );
 
-  const map = mapOf(hexes);
+  const desert = hexes.find((h) => h.terrain === 'desert');
+  const robber =
+    desert?.coord ??
+    hexes.find((h) => isLandTerrain(h.terrain))?.coord ??
+    hexes[0].coord;
+
+  const board: Board = {
+    hexes,
+    ports,
+    landVertices: [],
+    roadEdges: [],
+    shipEdges: [],
+    robber,
+  };
+  deriveBuildable(board);
+  if (options.seafarers) {
+    const pirate = openWater(hexes);
+    if (pirate) board.pirate = pirate;
+  }
+  return board;
+}
+
+/**
+ * Recompute which vertices are settleable and which edges take roads or ships.
+ *
+ * Purely a function of the terrain, so it is safe to run again whenever the
+ * terrain changes — which is exactly what a fog reveal does. Coastal edges
+ * legitimately appear in both sets: a shoreline takes a road or a ship.
+ */
+export function deriveBuildable(board: Board): void {
+  const map = mapOf(board.hexes);
   const onBoard = (edge: EdgeId): boolean =>
     edgeHexes(edge).every((h) => map.has(hexKey(h)));
 
   const landVertices = new Set<VertexId>();
   const roadEdges = new Set<EdgeId>();
   const shipEdges = new Set<EdgeId>();
-  for (const hex of hexes) {
+  for (const hex of board.hexes) {
     const land = isLandTerrain(hex.terrain);
     for (const edge of hexEdges(hex.coord)) {
       if (!onBoard(edge)) continue;
@@ -512,25 +542,40 @@ export function assembleBoard(
     for (const v of hexVertices(hex.coord)) landVertices.add(v);
   }
 
-  const desert = hexes.find((h) => h.terrain === 'desert');
-  const robber =
-    desert?.coord ??
-    hexes.find((h) => isLandTerrain(h.terrain))?.coord ??
-    hexes[0].coord;
+  board.landVertices = [...landVertices].sort();
+  board.roadEdges = [...roadEdges].sort();
+  board.shipEdges = [...shipEdges].sort();
+}
 
-  const board: Board = {
-    hexes,
-    ports,
-    landVertices: [...landVertices].sort(),
-    roadEdges: [...roadEdges].sort(),
-    shipEdges: [...shipEdges].sort(),
-    robber,
-  };
-  if (options.seafarers) {
-    const pirate = openWater(hexes);
-    if (pirate) board.pirate = pirate;
-  }
-  return board;
+/**
+ * Fold a hex that has just become land into the board.
+ *
+ * A revealed fog hex was classified as water when the board was assembled, so
+ * without this it renders as forest and behaves as ocean: no settling on it,
+ * no roads along it, no island to claim. That is exactly what it looked like
+ * in play — a tile that was somehow both.
+ *
+ * Island numbers are only ever *handed out* here, never reshuffled. Rerunning
+ * the original assignment would renumber islands by size, and players have
+ * already recorded which islands they reached by number. A hex that bridges
+ * two numbered islands joins the lower of them and leaves the other as it is;
+ * the alternative is invalidating a claim somebody already earned.
+ */
+export function absorbRevealedHex(board: Board, coord: HexCoord): void {
+  const map = mapOf(board.hexes);
+  const hex = map.get(hexKey(coord));
+  if (!hex || !isLandTerrain(hex.terrain)) return;
+
+  const adjacent = neighbors(coord)
+    .map((n) => map.get(hexKey(n)))
+    .filter((h): h is Hex => !!h && h.island !== undefined);
+
+  hex.island =
+    adjacent.length > 0
+      ? Math.min(...adjacent.map((h) => h.island as number))
+      : Math.max(-1, ...board.hexes.map((h) => h.island ?? -1)) + 1;
+
+  deriveBuildable(board);
 }
 
 // ---------------------------------------------------------------------------

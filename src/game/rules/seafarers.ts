@@ -17,6 +17,7 @@
 
 import type { ActionResult, GameAction } from '../actions';
 import { fail } from '../actions';
+import { absorbRevealedHex } from '../board';
 import type { Ctx, RulesModule } from '../engine';
 import type { EdgeId, VertexId } from '../hex';
 import { edgeVertices, hexKey, vertexEdges, vertexHexes } from '../hex';
@@ -24,6 +25,7 @@ import { add, canAfford, subtract } from '../hand';
 import {
   hexAt,
   isCurrentPlayer,
+  isSetupPhase,
   pieceAt,
   playerById,
   roadError,
@@ -75,9 +77,16 @@ function islandsAt(state: GameState, vertex: VertexId): number[] {
 }
 
 /**
- * Award the landfall bonus the first time a player settles each outer island.
- * Called for every settlement, including the two placed during setup — a
- * scenario that starts players on separate islands depends on that.
+ * Landfall: points for being the *first* to reach an island nobody has been to.
+ *
+ * Two constraints make it a discovery bonus rather than a participation award,
+ * both of which it was missing:
+ *
+ *  - **Setup does not pay.** The opening placements are where you were dealt,
+ *    not somewhere you sailed to. They still count as having *been* there, so
+ *    the island you start on can never be discovered by anyone afterwards.
+ *  - **Only the first arrival pays.** Following someone to an island they have
+ *    already settled is not a discovery, so it earns nothing.
  */
 function creditIslands(
   draft: GameState,
@@ -86,16 +95,26 @@ function creditIslands(
   vertex: VertexId,
 ): void {
   player.islandsSettled ??= [];
+  const duringSetup = isSetupPhase(draft.phase);
+
   for (const island of islandsAt(draft, vertex)) {
-    if (player.islandsSettled.includes(island)) continue;
+    const firstHere = !draft.players.some((p) =>
+      (p.islandsSettled ?? []).includes(island),
+    );
+    if (!player.islandsSettled.includes(island)) {
+      player.islandsSettled.push(island);
+    }
+    if (duringSetup || !firstHere) continue;
+
     const bonus = islandBonusFor(draft, island);
     if (bonus <= 0) continue;
-    player.islandsSettled.push(island);
+    player.islandsClaimed ??= [];
+    player.islandsClaimed.push(island);
     logLine(
       draft,
       ctx,
       player.id,
-      `settled a new island for ${bonus} victory point${bonus === 1 ? '' : 's'}`,
+      `was first to reach a new island — ${bonus} victory point${bonus === 1 ? '' : 's'}`,
     );
   }
 }
@@ -130,6 +149,9 @@ function revealFogAround(
     hex.terrain = terrain;
     if (number !== undefined) hex.number = number;
     delete hex.hidden;
+    // The board's land/sea sets were derived while this was still fog, so
+    // without this the hex draws as land and plays as ocean.
+    absorbRevealedHex(draft.board, hex.coord);
 
     const resource = RESOURCE_FOR_TERRAIN[terrain];
     if (resource) {
@@ -369,7 +391,7 @@ export const seafarersRules: RulesModule = {
   },
 
   score(state, player) {
-    return (player.islandsSettled ?? []).reduce(
+    return (player.islandsClaimed ?? []).reduce(
       (sum, island) => sum + islandBonusFor(state, island),
       0,
     );

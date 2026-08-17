@@ -246,8 +246,17 @@ export interface Player {
   hiddenPoints: number;
 
   // --- Seafarers ---
-  /** Islands this player has already scored a landfall bonus on. */
+  /**
+   * Islands this player has a building on. Setup placements count, so the
+   * island everyone starts on is never "new" to anybody.
+   */
   islandsSettled?: number[];
+  /**
+   * Islands this player was *first* to reach, which is what actually pays. The
+   * landfall bonus is a race, not a participation award: a second player
+   * arriving at an island already settled gets nothing for it.
+   */
+  islandsClaimed?: number[];
 
   // --- Cities & Knights ---
   improvements?: Record<ImprovementTrack, number>;

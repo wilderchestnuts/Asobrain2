@@ -122,7 +122,10 @@ export function createGame(opts: CreateGameOptions): GameState {
     };
     if (seat.botDifficulty) player.botDifficulty = seat.botDifficulty;
     if (seat.userId) player.userId = seat.userId;
-    if (options.expansions.seafarers) player.islandsSettled = [];
+    if (options.expansions.seafarers) {
+      player.islandsSettled = [];
+      player.islandsClaimed = [];
+    }
     if (options.expansions.citiesAndKnights) {
       player.improvements = { trade: 0, politics: 0, science: 0 };
       player.progressCards = [];

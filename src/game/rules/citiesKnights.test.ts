@@ -392,6 +392,112 @@ describe('barbarians', () => {
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.error).toMatch(/metropolis/i);
   });
+
+  /**
+   * The barbarians sack cities. They do not kill knights — win or lose, every
+   * knight simply stands down — so a knight was never a legal way to pay.
+   */
+  it('only ever takes cities, never knights', () => {
+    const state = ckGame('cities-only');
+    const owner = state.players[0].id;
+    const draft: GameState = {
+      ...state,
+      settlements: [
+        { vertex: state.board.landVertices[0], owner, kind: 'city' },
+      ],
+      knights: [
+        {
+          id: 'k1',
+          vertex: state.board.landVertices[6],
+          owner,
+          rank: 3,
+          active: true,
+          usedThisTurn: false,
+        },
+      ],
+      pending: [{ kind: 'barbarian_loss', playerId: owner }],
+      phase: 'barbarian_loss',
+    };
+
+    const offered = allLegalActions(draft, owner);
+    expect(offered.length).toBeGreaterThan(0);
+    expect(
+      offered.every((a) => a.type === 'barbarian_loss' && 'vertex' in a),
+    ).toBe(true);
+    expect(draft.knights).toHaveLength(1);
+  });
+
+  /**
+   * A player whose every city is a metropolis has nothing the barbarians can
+   * take, so they must not be asked for anything — being owed a payment you
+   * cannot legally make is a hang, and it is the one the owners hit in play.
+   */
+  it('asks nothing of a player who owns only metropolises', () => {
+    const state = ckGame('all-metro');
+    const [a, b] = state.players;
+    const draft: GameState = {
+      ...state,
+      settlements: [
+        {
+          vertex: state.board.landVertices[0],
+          owner: a.id,
+          kind: 'city',
+          metropolis: 'trade',
+        },
+        { vertex: state.board.landVertices[9], owner: b.id, kind: 'city' },
+      ],
+      knights: [],
+      barbarianPosition: BARBARIAN_ATTACK_AT,
+    };
+
+    __internals.barbarianAttack(draft, { rng: new Rng('m'), now: 0 });
+
+    const owed = draft.pending.filter((t) => t.kind === 'barbarian_loss');
+    expect(owed.map((t) => t.playerId)).toEqual([b.id]);
+  });
+
+  /**
+   * Paying the last city has to hand the turn back. The attack used to queue
+   * the demands without recording where to return, so when the queue drained
+   * the game sat in `barbarian_loss` with nobody holding a legal move.
+   */
+  it('returns to the turn once the last city is paid', () => {
+    const state = ckGame('recover');
+    const [a, b] = state.players;
+    const draft: GameState = {
+      ...state,
+      phase: 'main',
+      turn: 6,
+      settlements: [
+        { vertex: state.board.landVertices[0], owner: a.id, kind: 'city' },
+        { vertex: state.board.landVertices[9], owner: b.id, kind: 'city' },
+      ],
+      knights: [],
+      barbarianPosition: BARBARIAN_ATTACK_AT,
+    };
+
+    __internals.barbarianAttack(draft, { rng: new Rng('r'), now: 0 });
+    expect(draft.phase).toBe('barbarian_loss');
+
+    let now: GameState = draft;
+    for (const p of [a, b]) {
+      const move = allLegalActions(now, p.id)[0];
+      expect(move, `${p.name} owes a city but cannot pay`).toBeDefined();
+      const result = applyAction(now, { ...move, playerId: p.id });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      now = result.state;
+    }
+
+    expect(now.phase).toBe('main');
+    expect(now.pending).toEqual([]);
+    // And the turn can actually be ended.
+    const ended = applyAction(now, {
+      type: 'end_turn',
+      playerId: now.players[now.currentPlayer].id,
+    });
+    expect(ended.ok).toBe(true);
+  });
 });
 
 describe('knights', () => {

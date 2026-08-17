@@ -263,13 +263,13 @@ function barbarianAttack(draft: GameState, ctx: Ctx): void {
     // The players who contributed least lose a city each. Players with no
     // cities have nothing to lose and are skipped.
     // Only players with something the barbarians can actually take are on the
-    // hook. A metropolis cannot be destroyed, so a player whose every city is
-    // one has nothing to give — and queueing the demand anyway left them with
-    // no legal move at all, which hung the whole game.
+    // hook. A metropolis cannot be sacked, so a player whose every city is one
+    // has nothing to give — and queueing the demand anyway left them with no
+    // legal move at all, which hung the whole game.
     const canLose = (p: Player): boolean =>
       draft.settlements.some(
         (t) => t.owner === p.id && t.kind === 'city' && !t.metropolis,
-      ) || knightsOf(draft, p.id).length > 0;
+      );
 
     const exposed = draft.players.filter(
       (p) => !p.resigned && cityCount(draft, p.id) > 0 && canLose(p),
@@ -284,10 +284,22 @@ function barbarianAttack(draft: GameState, ctx: Ctx): void {
       const weakest = Math.min(
         ...exposed.map((p) => contributions.get(p.id) ?? 0),
       );
+      let queued = 0;
       for (const p of exposed) {
         if ((contributions.get(p.id) ?? 0) === weakest) {
           draft.pending.push({ kind: 'barbarian_loss', playerId: p.id });
+          queued++;
         }
+      }
+      // Somewhere to come back to once the last city is paid. Without this the
+      // queue drains, `advancePhase` finds nothing to do, and the game sits in
+      // `barbarian_loss` forever with nobody holding a legal move.
+      if (queued > 0) {
+        draft.pending.push({
+          kind: 'resume',
+          playerId: draft.players[draft.currentPlayer].id,
+          data: { phase: 'main' },
+        });
       }
     }
   }
@@ -593,26 +605,19 @@ function handle(
       );
       if (!task) return fail('you owe nothing to the barbarians');
 
-      if (action.knightId) {
-        const k = (draft.knights ?? []).find((x) => x.id === action.knightId);
-        if (!k || k.owner !== actor.id) return fail('that is not your knight');
-        draft.knights = (draft.knights ?? []).filter((x) => x.id !== k.id);
-        logLine(draft, ctx, actor.id, 'lost a knight to the barbarians');
-      } else if (action.vertex) {
-        const city = settlementAt(draft, action.vertex);
-        if (!city || city.owner !== actor.id || city.kind !== 'city') {
-          return fail('that is not your city');
-        }
-        // A metropolis is immune; the rules say the barbarians cannot take it.
-        if (city.metropolis) return fail('a metropolis cannot be destroyed');
-        city.kind = 'settlement';
-        delete city.wall;
-        actor.supply.cities += 1;
-        actor.supply.settlements -= 1;
-        logLine(draft, ctx, actor.id, 'lost a city to the barbarians');
-      } else {
-        return fail('choose a city or a knight to lose');
+      // The barbarians sack a city. They never kill knights — the knights are
+      // what fought them, and win or lose they all simply stand down.
+      if (!action.vertex) return fail('choose a city to give up');
+      const city = settlementAt(draft, action.vertex);
+      if (!city || city.owner !== actor.id || city.kind !== 'city') {
+        return fail('that is not your city');
       }
+      if (city.metropolis) return fail('a metropolis cannot be sacked');
+      city.kind = 'settlement';
+      delete city.wall;
+      actor.supply.cities += 1;
+      actor.supply.settlements -= 1;
+      logLine(draft, ctx, actor.id, 'lost a city to the barbarians');
 
       draft.pending.splice(draft.pending.indexOf(task), 1);
       advancePhase(draft);
@@ -1030,13 +1035,12 @@ export const citiesKnightsRules: RulesModule = {
       if (task.playerId !== playerId) continue;
 
       if (task.kind === 'barbarian_loss') {
+        // Cities only. The barbarians sack cities; they do not kill knights,
+        // and a metropolis is never sacked at all.
         for (const s of state.settlements) {
           if (s.owner === playerId && s.kind === 'city' && !s.metropolis) {
             out.push({ ...me, type: 'barbarian_loss', vertex: s.vertex });
           }
-        }
-        for (const k of knightsOf(state, playerId)) {
-          out.push({ ...me, type: 'barbarian_loss', knightId: k.id });
         }
         return out;
       }

@@ -111,6 +111,12 @@ const dropPending = (draft: GameState, task: PendingAction): void => {
 /**
  * Move to whatever the pending queue says is next, falling back to the phase
  * recorded by the matching `resume` entry when the queue is otherwise empty.
+ *
+ * Reaching the second half means no real obligation is outstanding, so *every*
+ * resume marker is spent — the first one records where the outermost
+ * interruption began, and the rest belong to interruptions that have already
+ * unwound. Leaving them behind is not harmless: a stray marker reads as
+ * unfinished business and the player can never end their turn.
  */
 export function advancePhase(draft: GameState): void {
   const next = draft.pending.find((p) => p.kind !== 'resume');
@@ -119,9 +125,9 @@ export function advancePhase(draft: GameState): void {
     if (phase) draft.phase = phase;
     return;
   }
-  const i = draft.pending.findIndex((p) => p.kind === 'resume');
-  if (i >= 0) {
-    const [resume] = draft.pending.splice(i, 1);
+  const resume = draft.pending.find((p) => p.kind === 'resume');
+  if (resume) {
+    draft.pending = draft.pending.filter((p) => p.kind !== 'resume');
     draft.phase = (resume.data?.phase as Phase | undefined) ?? 'main';
   }
 }
@@ -397,7 +403,10 @@ function handle(
         return fail('it is not your turn');
       }
       if (draft.phase !== 'main') return fail('you cannot end your turn yet');
-      if (draft.pending.length > 0) return fail('you have unfinished business');
+      // A `resume` marker is bookkeeping, not something the player owes.
+      if (draft.pending.some((p) => p.kind !== 'resume')) {
+        return fail('you have unfinished business');
+      }
       if (draft.activeTrade) return fail('cancel your trade offer first');
 
       for (const m of lifecycleModules(draft, ctx)) m.onTurnEnd?.(draft, ctx);

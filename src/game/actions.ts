@@ -64,7 +64,7 @@ export type GameAction =
     })
   | (Base & { type: 'discard_progress_card'; cardId: string })
   | (Base & { type: 'choose_metropolis'; track: ImprovementTrack })
-  | (Base & { type: 'barbarian_loss'; vertex?: VertexId; knightId?: string })
+  | (Base & { type: 'barbarian_loss'; vertex: VertexId })
 
   // --- meta ---
   | (Base & { type: 'resign' });

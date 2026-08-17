@@ -323,13 +323,11 @@ export function GameScreen({ game }: { game: UseGame }) {
 
       <ChoiceSheet
         open={owed?.kind === 'barbarian_loss'}
-        title="The barbarians took something"
+        title="The barbarians sacked a city"
         options={legal.filter((a) => a.type === 'barbarian_loss')}
         describe={(a) =>
           a.type === 'barbarian_loss'
-            ? a.knightId
-              ? 'Give up a knight'
-              : 'Give up a city (it becomes a settlement)'
+            ? `The city ${describeVertex(state, a.vertex)} — it goes back to a settlement`
             : ''
         }
         onPick={(a) => void act(stripId(a))}

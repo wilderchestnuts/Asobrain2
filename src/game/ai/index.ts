@@ -19,14 +19,17 @@ import {
   hexesTouchedBy,
   playerById,
   productionFor,
+  settlementAt,
   tradeResponders,
   truePoints,
+  violatesDistanceRule,
 } from '../legal';
 import { pipsFor } from '../board';
-import type { VertexId } from '../hex';
-import { hexVertices, vertexHexes } from '../hex';
+import { BARBARIAN_ATTACK_AT } from '../rules/citiesKnights';
+import type { EdgeId, VertexId } from '../hex';
+import { edgeVertices, hexVertices, vertexEdges, vertexHexes } from '../hex';
 import type { GameState, PlayerId, Resource, Tradeable } from '../types';
-import { RESOURCE_FOR_TERRAIN, RESOURCES } from '../types';
+import { RESOURCE_FOR_TERRAIN, RESOURCES, TRACK_COMMODITY } from '../types';
 
 
 /** Interruptions must be answered before anything else can happen. */
@@ -85,6 +88,81 @@ export function evaluateVertex(state: GameState, vertex: VertexId): number {
   // A port is only worth something once there is production to feed it.
   const onPort = state.board.ports.some((p) => p.vertices.includes(vertex));
   return pips + kinds.size * 1.5 + (onPort && pips > 0 ? 0.75 : 0);
+}
+
+/**
+ * How much a road or ship on this edge advances the player towards somewhere
+ * worth settling.
+ *
+ * The bot used to take the first legal edge in enumeration order, which is
+ * arbitrary — so it laid roads into dead ends and along the coast and almost
+ * never arrived anywhere. Over a long game that reads as a player who does
+ * nothing, because building a road that leads nowhere *is* doing nothing.
+ *
+ * The search walks outward from the new edge over buildable edges and takes
+ * the best open spot it can see, discounted by how many more pieces it would
+ * take to get there.
+ */
+const ROUTE_HORIZON = 3;
+
+function routeValue(
+  state: GameState,
+  playerId: PlayerId,
+  edge: EdgeId,
+): number {
+  const buildable = new Set<EdgeId>([
+    ...state.board.roadEdges,
+    ...state.board.shipEdges,
+  ]);
+  const taken = new Set(state.roads.map((r) => r.edge));
+
+  let value = 0;
+  const seen = new Set<EdgeId>([edge]);
+  let frontier: EdgeId[] = [edge];
+
+  for (let step = 0; step <= ROUTE_HORIZON && frontier.length > 0; step++) {
+    const next: EdgeId[] = [];
+    for (const e of frontier) {
+      for (const v of edgeVertices(e)) {
+        // Somewhere we could actually put a settlement one day.
+        if (
+          state.board.landVertices.includes(v) &&
+          !settlementAt(state, v) &&
+          !violatesDistanceRule(state, v)
+        ) {
+          value = Math.max(value, evaluateVertex(state, v) / (1 + step));
+        }
+        for (const n of vertexEdges(v)) {
+          if (seen.has(n) || !buildable.has(n) || taken.has(n)) continue;
+          seen.add(n);
+          next.push(n);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return value;
+}
+
+/** The best road or ship available, or null if none leads anywhere. */
+function chooseRoute(
+  state: GameState,
+  playerId: PlayerId,
+  legal: GameAction[],
+): { action: GameAction; value: number } | null {
+  const routes = [...all(legal, 'build_road'), ...all(legal, 'build_ship')];
+  if (routes.length === 0) return null;
+
+  let winner: GameAction | null = null;
+  let bestValue = -Infinity;
+  for (const a of routes) {
+    const v = routeValue(state, playerId, (a as { edge: EdgeId }).edge);
+    if (v > bestValue) {
+      bestValue = v;
+      winner = a;
+    }
+  }
+  return winner ? { action: winner, value: bestValue } : null;
 }
 
 /** What this player would earn per roll, as a rough measure of position. */
@@ -148,9 +226,11 @@ export function chooseAction(
         evaluateVertex(state, (a as { vertex: VertexId }).vertex),
       );
     }
-    // The opening road should point at the best spot still open nearby.
-    const roads = [...all(legal, 'build_road'), ...all(legal, 'build_ship')];
-    if (roads.length > 0) return roads[0];
+    // The opening road points at the best spot still open nearby — which is
+    // what the comment here always claimed, and what taking the first legal
+    // edge never did.
+    const route = chooseRoute(state, playerId, legal);
+    if (route) return route.action;
     return pick(legal, 'end_turn') ?? null;
   }
 
@@ -273,12 +353,11 @@ function chooseBlocking(
     });
   }
 
-  // Give up a knight before a city; cities are points.
+  // A sacked city is always a city, so give up the least productive one.
   const loss = all(blocking, 'barbarian_loss');
   if (loss.length > 0) {
-    return (
-      loss.find((a) => (a as { knightId?: string }).knightId !== undefined) ??
-      loss[0]
+    return best(loss, (a) =>
+      a.type === 'barbarian_loss' ? -evaluateVertex(state, a.vertex) : 0,
     );
   }
 
@@ -306,14 +385,27 @@ function chooseBuild(
     );
   }
 
-  // Cities & Knights: improvements are cheap points and better card draws.
-  const improvements = all(legal, 'buy_improvement');
-  if (improvements.length > 0) return improvements[0];
+  // Expansion beats everything else while there is somewhere worth reaching.
+  // Knights and improvements used to come first unconditionally, which is how
+  // a bot ends a game with three knights, one city and no roads.
+  const route = chooseRoute(state, playerId, legal);
+  if (route && route.value >= WORTH_BUILDING_TOWARDS) return route.action;
 
-  // Keep at least one knight ready, or the barbarians take a city.
-  const knights = (state.knights ?? []).filter((k) => k.owner === playerId);
-  const activeKnights = knights.filter((k) => k.active).length;
-  if (activeKnights === 0) {
+  // Cities & Knights: improvements are cheap points and better card draws.
+  // Follow the commodity we are actually accumulating rather than always the
+  // same track, which is what taking the first offer amounted to.
+  const improvements = all(legal, 'buy_improvement');
+  if (improvements.length > 0) {
+    const me = playerById(state, playerId)!;
+    return best(improvements, (a) =>
+      a.type === 'buy_improvement' ? count(me.hand, TRACK_COMMODITY[a.track]) : 0,
+    );
+  }
+
+  // Keep a knight ready when the barbarians are actually a threat. Standing an
+  // army up the moment the ship starts over, every time, is what starved the
+  // rest of the turn.
+  if (needsDefence(state, playerId)) {
     const activate = pick(legal, 'activate_knight');
     if (activate) return activate;
     const hire = pick(legal, 'build_knight');
@@ -327,16 +419,40 @@ function chooseBuild(
   const playCard = pick(legal, 'play_dev_card') ?? pick(legal, 'play_progress_card');
   if (playCard) return playCard;
 
-  // Roads and ships, aimed at the best reachable spot.
-  const routes = [...all(legal, 'build_road'), ...all(legal, 'build_ship')];
-  if (routes.length > 0 && incomeFor(state, playerId) < 40) {
-    return routes[0];
-  }
+  // Nothing better to do: still take the best route rather than none at all.
+  if (route && incomeFor(state, playerId) < 40) return route.action;
 
   const wall = pick(legal, 'build_wall');
   if (wall) return wall;
 
   return null;
+}
+
+/**
+ * A route is worth laying when it can see a spot roughly as good as a middling
+ * settlement. Below that it is wandering, and the resources are better spent.
+ */
+const WORTH_BUILDING_TOWARDS = 4;
+
+/**
+ * Whether to spend on knights now.
+ *
+ * Cities are what the barbarians take, so a player with none has nothing at
+ * risk. Otherwise: keep one knight standing, and add to the muster as the ship
+ * closes in.
+ */
+function needsDefence(state: GameState, playerId: PlayerId): boolean {
+  if (!state.options.expansions.citiesAndKnights) return false;
+  const cities = state.settlements.filter(
+    (s) => s.owner === playerId && s.kind === 'city',
+  ).length;
+  if (cities === 0) return false;
+
+  const knights = (state.knights ?? []).filter(
+    (k) => k.owner === playerId && k.active,
+  ).length;
+  const imminent = (state.barbarianPosition ?? 0) >= BARBARIAN_ATTACK_AT - 2;
+  return knights === 0 || (imminent && knights < cities);
 }
 
 // ---------------------------------------------------------------------------
@@ -436,27 +552,6 @@ export function mayAskForTrade(state: GameState, playerId: PlayerId): boolean {
     (p) => !p.isBot && !p.resigned && p.id !== playerId,
   );
   return humans.length > 0;
-}
-
-/** Record that a bot made an offer, so the caps mean something. */
-export function noteTradeOffer(state: GameState, playerId: PlayerId): void {
-  const me = playerById(state, playerId);
-  if (!me) return;
-  me.botTradesMade = (me.botTradesMade ?? 0) + 1;
-  me.botTradesThisTurn = (me.botTradesThisTurn ?? 0) + 1;
-}
-
-/** Record a refusal, which silences this bot for the rest of the turn. */
-export function noteTradeRefused(state: GameState, playerId: PlayerId): void {
-  state.botTradeRefusals ??= {};
-  state.botTradeRefusals[playerId] =
-    (state.botTradeRefusals[playerId] ?? 0) + 1;
-}
-
-/** Clear the per-turn counters. Called when a turn begins. */
-export function resetTurnTradeCounters(state: GameState): void {
-  for (const p of state.players) p.botTradesThisTurn = 0;
-  state.botTradeRefusals = {};
 }
 
 /**
